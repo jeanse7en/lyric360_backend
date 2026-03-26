@@ -27,12 +27,33 @@ class Song(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=False, index=True)
     author = Column(String)
-    lyrics = Column(Text)
-    sheet_drive_url = Column(String)
-    slide_drive_url = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    sheets = relationship("SongSheet", back_populates="song", cascade="all, delete-orphan")
+    lyrics = relationship("SongLyrics", back_populates="song", cascade="all, delete-orphan")
+
+
+class SongSheet(Base):
+    __tablename__ = "song_sheets"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    song_id = Column(UUID(as_uuid=True), ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
+    sheet_drive_url = Column(String, nullable=False)
     tone_male = Column(String)
     tone_female = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    song = relationship("Song", back_populates="sheets")
+
+
+class SongLyrics(Base):
+    __tablename__ = "song_lyrics"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    song_id = Column(UUID(as_uuid=True), ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
+    lyrics = Column(Text, nullable=False)
+    slide_drive_url = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    song = relationship("Song", back_populates="lyrics")
 
 class LiveSession(Base):
     __tablename__ = "live_sessions"

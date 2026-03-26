@@ -1,5 +1,6 @@
+from datetime import date
 from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 import models
 import schemas
 from database import get_db
@@ -19,6 +20,24 @@ app.add_middleware(
 def read_root():
     return {"message": "Lyric360 Backend is running smoothly!"}
 
+# API: Lấy danh sách buổi diễn available (live trước, sau đó planned theo ngày)
+@app.get("/api/sessions/available", response_model=list[schemas.SessionResponse])
+def get_available_sessions(db: Session = Depends(get_db)):
+    return (
+        db.query(models.LiveSession)
+        .filter(
+            models.LiveSession.status.in_(["live", "planned"]),
+            models.LiveSession.session_date >= date.today(),
+        )
+        .order_by(
+            # live sessions first, then by date ascending
+            (models.LiveSession.status != "live"),
+            models.LiveSession.session_date.asc(),
+        )
+        .all()
+    )
+
+
 # API 1: Hỗ trợ Paging và Load mặc định
 @app.get("/api/songs/search", response_model=list[schemas.SongResponse])
 def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
@@ -29,7 +48,14 @@ def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Ses
         query = query.filter(models.Song.title.ilike(f"%{q}%"))
         
     # Phân trang (Paging) và sắp xếp theo tên ABC
-    songs = query.order_by(models.Song.title).offset(offset).limit(limit).all()
+    songs = (
+        query
+        .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
+        .order_by(models.Song.title)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     return songs
 
 # API 2: Đăng ký bài hát mới vào hàng đợi
@@ -39,13 +65,23 @@ def register_queue(queue_data: schemas.QueueCreate, db: Session = Depends(get_db
     session_exists = db.query(models.LiveSession).filter(models.LiveSession.id == queue_data.session_id).first()
     if not session_exists:
         raise HTTPException(status_code=404, detail="Không tìm thấy đêm diễn này")
+    if session_exists.status != "live":
+        raise HTTPException(status_code=400, detail="Đêm diễn chưa bắt đầu hoặc đã kết thúc")
 
     # 2. Kiểm tra bài hát có trong kho không
     song_exists = db.query(models.Song).filter(models.Song.id == queue_data.song_id).first()
     if not song_exists:
         raise HTTPException(status_code=404, detail="Không tìm thấy bài hát này")
 
-    # 3. Tạo record
+    # 3. Kiểm tra bài hát đã được đăng ký trong đêm diễn chưa
+    duplicate = db.query(models.QueueRegistration).filter(
+        models.QueueRegistration.session_id == queue_data.session_id,
+        models.QueueRegistration.song_id == queue_data.song_id,
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
+
+    # 4. Tạo record
     new_registration = models.QueueRegistration(
         session_id=queue_data.session_id,
         song_id=queue_data.song_id,
