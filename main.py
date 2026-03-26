@@ -20,6 +20,19 @@ app.add_middleware(
 def read_root():
     return {"message": "Lyric360 Backend is running smoothly!"}
 
+# API: Lấy tất cả buổi diễn (dùng cho trang nhạc công, bao gồm cả đã kết thúc)
+@app.get("/api/sessions", response_model=list[schemas.SessionResponse])
+def get_all_sessions(db: Session = Depends(get_db)):
+    return (
+        db.query(models.LiveSession)
+        .order_by(
+            (models.LiveSession.status != "live"),
+            models.LiveSession.session_date.desc(),
+        )
+        .all()
+    )
+
+
 # API: Lấy danh sách buổi diễn available (live trước, sau đó planned theo ngày)
 @app.get("/api/sessions/available", response_model=list[schemas.SessionResponse])
 def get_available_sessions(db: Session = Depends(get_db)):
