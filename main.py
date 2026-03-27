@@ -1,7 +1,10 @@
-from datetime import date
+from datetime import date, datetime, timezone
+from uuid import UUID
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func
 import models
+from utils.text import normalize_vn
 import schemas
 from database import get_db
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,6 +54,92 @@ def get_available_sessions(db: Session = Depends(get_db)):
     )
 
 
+# API: Quản lý bài hát — danh sách kèm số lượng lyric/sheet và số chưa verify
+@app.get("/api/songs/manage", response_model=list[schemas.SongManageItem])
+def get_songs_manage(q: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+    query = db.query(models.Song)
+    if q and q.strip():
+        query = query.filter(
+            models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
+        )
+    songs = (
+        query
+        .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
+        .order_by(models.Song.title)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    result = []
+    for song in songs:
+        unverified = sum(1 for s in song.sheets if s.verified_at is None) + \
+                     sum(1 for l in song.lyrics if l.verified_at is None)
+        result.append(schemas.SongManageItem(
+            id=song.id,
+            title=song.title,
+            author=song.author,
+            lyric_count=len(song.lyrics),
+            sheet_count=len(song.sheets),
+            unverified_count=unverified,
+        ))
+    return result
+
+
+# API: Đếm tổng số bài có lyric/sheet chưa được verify
+@app.get("/api/songs/unverified-count", response_model=schemas.UnverifiedCountResponse)
+def get_unverified_count(db: Session = Depends(get_db)):
+    from sqlalchemy import func, or_
+    unverified_lyrics = db.query(models.SongLyrics.song_id).filter(models.SongLyrics.verified_at.is_(None)).distinct()
+    unverified_sheets = db.query(models.SongSheet.song_id).filter(models.SongSheet.verified_at.is_(None)).distinct()
+    song_ids = unverified_lyrics.union(unverified_sheets).subquery()
+    count = db.query(func.count()).select_from(song_ids).scalar()
+    return {"count": count or 0}
+
+
+# API: Chi tiết một bài hát (full lyrics + sheets)
+@app.get("/api/songs/{song_id}", response_model=schemas.SongResponse)
+def get_song(song_id: UUID, db: Session = Depends(get_db)):
+    song = (
+        db.query(models.Song)
+        .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
+        .filter(models.Song.id == song_id)
+        .first()
+    )
+    if not song:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bài hát")
+    return song
+
+
+# API: Verify một lyric
+@app.post("/api/songs/{song_id}/lyrics/{lyric_id}/verify", response_model=schemas.SongLyricsResponse)
+def verify_lyric(song_id: UUID, lyric_id: UUID, db: Session = Depends(get_db)):
+    lyric = db.query(models.SongLyrics).filter(
+        models.SongLyrics.id == lyric_id,
+        models.SongLyrics.song_id == song_id,
+    ).first()
+    if not lyric:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lyric")
+    lyric.verified_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(lyric)
+    return lyric
+
+
+# API: Verify một sheet
+@app.post("/api/songs/{song_id}/sheets/{sheet_id}/verify", response_model=schemas.SongSheetResponse)
+def verify_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
+    sheet = db.query(models.SongSheet).filter(
+        models.SongSheet.id == sheet_id,
+        models.SongSheet.song_id == song_id,
+    ).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Không tìm thấy sheet")
+    sheet.verified_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(sheet)
+    return sheet
+
+
 # API 1: Hỗ trợ Paging và Load mặc định
 @app.get("/api/songs/search", response_model=list[schemas.SongResponse])
 def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
@@ -58,7 +147,9 @@ def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Ses
     
     # Nếu có gõ tìm kiếm thì filter
     if q and len(q.strip()) > 0:
-        query = query.filter(models.Song.title.ilike(f"%{q}%"))
+        query = query.filter(
+            models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
+        )
         
     # Phân trang (Paging) và sắp xếp theo tên ABC
     songs = (

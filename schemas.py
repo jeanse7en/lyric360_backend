@@ -9,6 +9,7 @@ class SongSheetResponse(BaseModel):
     sheet_drive_url: str
     tone_male: Optional[str] = None
     tone_female: Optional[str] = None
+    verified_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
@@ -19,10 +20,27 @@ class SongLyricsResponse(BaseModel):
     id: UUID
     lyrics: str
     slide_drive_url: Optional[str] = None
+    verified_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class SongManageItem(BaseModel):
+    id: UUID
+    title: str
+    author: Optional[str] = None
+    lyric_count: int
+    sheet_count: int
+    unverified_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class UnverifiedCountResponse(BaseModel):
+    count: int
 
 
 # Response khi tìm kiếm bài hát

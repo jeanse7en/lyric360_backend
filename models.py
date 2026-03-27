@@ -25,7 +25,8 @@ class User(Base):
 class Song(Base):
     __tablename__ = "songs"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    title_normalized = Column(String, nullable=True)
     author = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -40,6 +41,7 @@ class SongSheet(Base):
     sheet_drive_url = Column(String, nullable=False)
     tone_male = Column(String)
     tone_female = Column(String)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     song = relationship("Song", back_populates="sheets")
@@ -51,6 +53,7 @@ class SongLyrics(Base):
     song_id = Column(UUID(as_uuid=True), ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
     lyrics = Column(Text, nullable=False)
     slide_drive_url = Column(String)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     song = relationship("Song", back_populates="lyrics")
