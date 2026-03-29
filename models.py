@@ -64,10 +64,15 @@ class LiveSession(Base):
     __tablename__ = "live_sessions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     venue_id = Column(UUID(as_uuid=True), ForeignKey("venues.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=True)
     session_date = Column(Date, nullable=False)
     status = Column(String, default="planned")
     camera_start = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    registrations = relationship("QueueRegistration", back_populates="session", cascade="all, delete-orphan")
 
 class QueueRegistration(Base):
     __tablename__ = "queue_registrations"
@@ -83,5 +88,5 @@ class QueueRegistration(Base):
     video_url = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationship để lấy nhanh thông tin bài hát khi query
+    session = relationship("LiveSession", back_populates="registrations")
     song = relationship("Song")

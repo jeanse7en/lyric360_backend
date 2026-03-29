@@ -24,17 +24,131 @@ app.add_middleware(
 def read_root():
     return {"message": "Lyric360 Backend is running smoothly!"}
 
-# API: Lấy tất cả buổi diễn (dùng cho trang nhạc công, bao gồm cả đã kết thúc)
-@app.get("/api/sessions", response_model=list[schemas.SessionResponse])
-def get_all_sessions(db: Session = Depends(get_db)):
-    return (
-        db.query(models.LiveSession)
-        .order_by(
-            (models.LiveSession.status != "live"),
-            models.LiveSession.session_date.desc(),
-        )
-        .all()
+# API: Lấy tất cả buổi diễn — hỗ trợ filter theo tên và khoảng ngày
+@app.get("/api/sessions", response_model=list[schemas.SessionDetailResponse])
+def get_all_sessions(
+    name: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy import func as sqlfunc
+    query = db.query(models.LiveSession).options(selectinload(models.LiveSession.registrations))
+    if name and name.strip():
+        query = query.filter(models.LiveSession.name.ilike(f"%{name.strip()}%"))
+    if date_from:
+        query = query.filter(models.LiveSession.session_date >= date_from)
+    if date_to:
+        query = query.filter(models.LiveSession.session_date <= date_to)
+    sessions = query.order_by(
+        (models.LiveSession.status != "live"),
+        models.LiveSession.session_date.desc(),
+    ).all()
+
+    result = []
+    for s in sessions:
+        song_ids_with_unverified = (
+            db.query(models.SongLyrics.song_id).filter(
+                models.SongLyrics.verified_at.is_(None),
+                models.SongLyrics.deleted_at.is_(None),
+                models.SongLyrics.song_id.in_([r.song_id for r in s.registrations]),
+            ).union(
+                db.query(models.SongSheet.song_id).filter(
+                    models.SongSheet.verified_at.is_(None),
+                    models.SongSheet.deleted_at.is_(None),
+                    models.SongSheet.song_id.in_([r.song_id for r in s.registrations]),
+                )
+            ).distinct().count()
+        ) if s.registrations else 0
+        result.append(schemas.SessionDetailResponse(
+            id=s.id,
+            name=s.name,
+            session_date=s.session_date,
+            status=s.status,
+            started_at=s.started_at,
+            ended_at=s.ended_at,
+            order_count=len(s.registrations),
+            unverified_song_count=song_ids_with_unverified,
+        ))
+    return result
+
+
+# API: Tạo buổi diễn mới
+@app.post("/api/sessions", response_model=schemas.SessionResponse)
+def create_session(data: schemas.SessionCreate, db: Session = Depends(get_db)):
+    # Dùng venue_id tạm — sau này lấy từ auth token
+    from sqlalchemy import text
+    venue_id = db.execute(text("SELECT id FROM venues LIMIT 1")).scalar()
+    if not venue_id:
+        raise HTTPException(status_code=400, detail="Không tìm thấy venue")
+    session = models.LiveSession(
+        venue_id=venue_id,
+        name=data.name,
+        session_date=data.session_date,
+        status="planned",
     )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+# API: Bắt đầu buổi diễn
+@app.post("/api/sessions/{session_id}/start", response_model=schemas.SessionResponse)
+def start_session(session_id: UUID, db: Session = Depends(get_db)):
+    live_already = db.query(models.LiveSession).filter(models.LiveSession.status == "live").first()
+    if live_already and live_already.id != session_id:
+        raise HTTPException(status_code=409, detail=f"Buổi diễn '{live_already.name or live_already.session_date}' đang live. Hãy kết thúc trước.")
+    session = db.query(models.LiveSession).filter(models.LiveSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy buổi diễn")
+    if session.status != "planned":
+        raise HTTPException(status_code=400, detail="Chỉ có thể bắt đầu buổi diễn ở trạng thái planned")
+    session.status = "live"
+    session.started_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+# API: Kết thúc buổi diễn
+@app.post("/api/sessions/{session_id}/stop", response_model=schemas.SessionResponse)
+def stop_session(session_id: UUID, db: Session = Depends(get_db)):
+    session = db.query(models.LiveSession).filter(models.LiveSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy buổi diễn")
+    if session.status != "live":
+        raise HTTPException(status_code=400, detail="Chỉ có thể kết thúc buổi diễn đang live")
+    session.status = "ended"
+    session.ended_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+# API: Cập nhật thông tin buổi diễn
+@app.patch("/api/sessions/{session_id}", response_model=schemas.SessionResponse)
+def update_session(session_id: UUID, data: schemas.SessionUpdate, db: Session = Depends(get_db)):
+    session = db.query(models.LiveSession).filter(models.LiveSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy buổi diễn")
+    if data.name is not None:
+        session.name = data.name or None
+    if data.session_date is not None:
+        session.session_date = data.session_date
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+# API: Xóa buổi diễn
+@app.delete("/api/sessions/{session_id}", status_code=204)
+def delete_session(session_id: UUID, db: Session = Depends(get_db)):
+    session = db.query(models.LiveSession).filter(models.LiveSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy buổi diễn")
+    db.delete(session)
+    db.commit()
 
 
 # API: Lấy danh sách buổi diễn available (live trước, sau đó planned theo ngày)
@@ -110,6 +224,25 @@ def get_unverified_count(db: Session = Depends(get_db)):
     song_ids = unverified_lyrics.union(unverified_sheets).subquery()
     count = db.query(func.count()).select_from(song_ids).scalar()
     return {"count": count or 0}
+
+
+# API: Tìm kiếm bài hát (phải đặt trước /{song_id} để tránh FastAPI bắt "search" như UUID)
+@app.get("/api/songs/search", response_model=list[schemas.SongResponse])
+def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+    query = db.query(models.Song)
+    if q and len(q.strip()) > 0:
+        query = query.filter(
+            models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
+        )
+    songs = (
+        query
+        .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
+        .order_by(models.Song.title)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return songs
 
 
 # API: Chi tiết một bài hát (full lyrics + sheets)
@@ -197,26 +330,6 @@ def delete_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
 
 
 # API 1: Hỗ trợ Paging và Load mặc định
-@app.get("/api/songs/search", response_model=list[schemas.SongResponse])
-def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
-    query = db.query(models.Song)
-    
-    # Nếu có gõ tìm kiếm thì filter
-    if q and len(q.strip()) > 0:
-        query = query.filter(
-            models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
-        )
-        
-    # Phân trang (Paging) và sắp xếp theo tên ABC
-    songs = (
-        query
-        .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
-        .order_by(models.Song.title)
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-    return songs
 
 # API 2: Đăng ký bài hát mới vào hàng đợi
 @app.post("/api/queue/register", response_model=schemas.QueueResponse)

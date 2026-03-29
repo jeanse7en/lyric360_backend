@@ -58,11 +58,32 @@ class SongResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     id: UUID
+    name: Optional[str] = None
     session_date: date
     status: str
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class SessionDetailResponse(SessionResponse):
+    order_count: int = 0
+    unverified_song_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class SessionCreate(BaseModel):
+    name: Optional[str] = None
+    session_date: date
+
+
+class SessionUpdate(BaseModel):
+    name: Optional[str] = None
+    session_date: Optional[date] = None
 
 
 # Request khi khách gửi form đăng ký
