@@ -1,13 +1,14 @@
 from datetime import date, datetime, timezone
 from uuid import UUID
+
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import func
+
 import models
-from utils.text import normalize_vn
 import schemas
 from database import get_db
-from fastapi.middleware.cors import CORSMiddleware
+from utils.text import normalize_vn
 
 app = FastAPI(title="Lyric360 API Backend")
 
@@ -55,12 +56,27 @@ def get_available_sessions(db: Session = Depends(get_db)):
 
 
 # API: Quản lý bài hát — danh sách kèm số lượng lyric/sheet và số chưa verify
+# verify_status: UNVERIFIED_ALL | UNVERIFIED_LYRIC | UNVERIFIED_SHEET | VERIFIED
 @app.get("/api/songs/manage", response_model=list[schemas.SongManageItem])
-def get_songs_manage(q: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+def get_songs_manage(q: str | None = None, verify_status: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
     query = db.query(models.Song)
     if q and q.strip():
         query = query.filter(
             models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
+        )
+    if verify_status == "UNVERIFIED_LYRIC":
+        query = query.filter(models.Song.lyrics.any(models.SongLyrics.verified_at.is_(None)))
+    elif verify_status == "UNVERIFIED_SHEET":
+        query = query.filter(models.Song.sheets.any(models.SongSheet.verified_at.is_(None)))
+    elif verify_status == "UNVERIFIED_ALL":
+        query = query.filter(
+            models.Song.lyrics.any(models.SongLyrics.verified_at.is_(None)) |
+            models.Song.sheets.any(models.SongSheet.verified_at.is_(None))
+        )
+    elif verify_status == "VERIFIED":
+        query = query.filter(
+            ~models.Song.lyrics.any(models.SongLyrics.verified_at.is_(None)),
+            ~models.Song.sheets.any(models.SongSheet.verified_at.is_(None)),
         )
     songs = (
         query
@@ -88,8 +104,8 @@ def get_songs_manage(q: str | None = None, offset: int = 0, limit: int = 20, db:
 # API: Đếm tổng số bài có lyric/sheet chưa được verify
 @app.get("/api/songs/unverified-count", response_model=schemas.UnverifiedCountResponse)
 def get_unverified_count(db: Session = Depends(get_db)):
-    from sqlalchemy import func, or_
-    unverified_lyrics = db.query(models.SongLyrics.song_id).filter(models.SongLyrics.verified_at.is_(None)).distinct()
+    from sqlalchemy import func
+    unverified_lyrics = db.query(models.SongLyrics.song_id).filter(models.SongLyrics.verified_at.is_(None), models.SongLyrics.deleted_at.is_(None)).distinct()
     unverified_sheets = db.query(models.SongSheet.song_id).filter(models.SongSheet.verified_at.is_(None)).distinct()
     song_ids = unverified_lyrics.union(unverified_sheets).subquery()
     count = db.query(func.count()).select_from(song_ids).scalar()
@@ -99,9 +115,15 @@ def get_unverified_count(db: Session = Depends(get_db)):
 # API: Chi tiết một bài hát (full lyrics + sheets)
 @app.get("/api/songs/{song_id}", response_model=schemas.SongResponse)
 def get_song(song_id: UUID, db: Session = Depends(get_db)):
+    from sqlalchemy.orm import with_loader_criteria
     song = (
         db.query(models.Song)
-        .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
+        .options(
+            selectinload(models.Song.sheets),
+            selectinload(models.Song.lyrics),
+            with_loader_criteria(models.SongLyrics, models.SongLyrics.deleted_at.is_(None)),
+            with_loader_criteria(models.SongSheet, models.SongSheet.deleted_at.is_(None)),
+        )
         .filter(models.Song.id == song_id)
         .first()
     )
@@ -116,10 +138,27 @@ def verify_lyric(song_id: UUID, lyric_id: UUID, db: Session = Depends(get_db)):
     lyric = db.query(models.SongLyrics).filter(
         models.SongLyrics.id == lyric_id,
         models.SongLyrics.song_id == song_id,
+        models.SongLyrics.deleted_at.is_(None),
     ).first()
     if not lyric:
         raise HTTPException(status_code=404, detail="Không tìm thấy lyric")
     lyric.verified_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(lyric)
+    return lyric
+
+
+# API: Xóa mềm một lyric
+@app.delete("/api/songs/{song_id}/lyrics/{lyric_id}", response_model=schemas.SongLyricsResponse)
+def delete_lyric(song_id: UUID, lyric_id: UUID, db: Session = Depends(get_db)):
+    lyric = db.query(models.SongLyrics).filter(
+        models.SongLyrics.id == lyric_id,
+        models.SongLyrics.song_id == song_id,
+        models.SongLyrics.deleted_at.is_(None),
+    ).first()
+    if not lyric:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lyric")
+    lyric.deleted_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(lyric)
     return lyric
@@ -131,10 +170,27 @@ def verify_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
     sheet = db.query(models.SongSheet).filter(
         models.SongSheet.id == sheet_id,
         models.SongSheet.song_id == song_id,
+        models.SongSheet.deleted_at.is_(None),
     ).first()
     if not sheet:
         raise HTTPException(status_code=404, detail="Không tìm thấy sheet")
     sheet.verified_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(sheet)
+    return sheet
+
+
+# API: Xóa mềm một sheet
+@app.delete("/api/songs/{song_id}/sheets/{sheet_id}", response_model=schemas.SongSheetResponse)
+def delete_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
+    sheet = db.query(models.SongSheet).filter(
+        models.SongSheet.id == sheet_id,
+        models.SongSheet.song_id == song_id,
+        models.SongSheet.deleted_at.is_(None),
+    ).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Không tìm thấy sheet")
+    sheet.deleted_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(sheet)
     return sheet

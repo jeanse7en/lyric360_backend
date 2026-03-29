@@ -42,6 +42,7 @@ class SongSheet(Base):
     tone_male = Column(String)
     tone_female = Column(String)
     verified_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     song = relationship("Song", back_populates="sheets")
@@ -54,6 +55,7 @@ class SongLyrics(Base):
     lyrics = Column(Text, nullable=False)
     slide_drive_url = Column(String)
     verified_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     song = relationship("Song", back_populates="lyrics")
