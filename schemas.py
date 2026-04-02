@@ -21,6 +21,8 @@ class SongLyricsResponse(BaseModel):
     id: UUID
     lyrics: str
     slide_drive_url: Optional[str] = None
+    source_lyric: str = "MANUAL"
+    composed_at: Optional[datetime] = None
     verified_at: Optional[datetime] = None
     deleted_at: Optional[datetime] = None
     created_at: datetime
@@ -84,6 +86,28 @@ class SessionCreate(BaseModel):
 class SessionUpdate(BaseModel):
     name: Optional[str] = None
     session_date: Optional[date] = None
+
+
+class SongCreate(BaseModel):
+    title: str
+    author: Optional[str] = None
+
+
+class SongUpdate(BaseModel):
+    title: Optional[str] = None
+    author: Optional[str] = None
+
+
+class SongSheetCreate(BaseModel):
+    sheet_drive_url: str
+    tone_male: Optional[str] = None
+    tone_female: Optional[str] = None
+
+
+class SongLyricsCreate(BaseModel):
+    lyrics: str
+    source_lyric: str = "MANUAL"
+    composed_at: Optional[datetime] = None
 
 
 # Request khi khách gửi form đăng ký

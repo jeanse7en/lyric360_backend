@@ -1,3 +1,5 @@
 __pycache__/
 venv/
 .env
+oauth_token.json
+service_account.json

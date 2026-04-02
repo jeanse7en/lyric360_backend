@@ -1,7 +1,10 @@
+import logging
 from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import FastAPI, Depends, HTTPException
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, selectinload
 
@@ -224,6 +227,111 @@ def get_unverified_count(db: Session = Depends(get_db)):
     song_ids = unverified_lyrics.union(unverified_sheets).subquery()
     count = db.query(func.count()).select_from(song_ids).scalar()
     return {"count": count or 0}
+
+
+# API: Tạo bài hát mới thủ công
+@app.post("/api/songs", response_model=schemas.SongResponse)
+def create_song(data: schemas.SongCreate, db: Session = Depends(get_db)):
+    song = models.Song(
+        title=data.title,
+        title_normalized=normalize_vn(data.title),
+        author=data.author,
+    )
+    db.add(song)
+    db.commit()
+    db.refresh(song)
+    return song
+
+
+# API: Cập nhật thông tin bài hát
+@app.patch("/api/songs/{song_id}", response_model=schemas.SongResponse)
+def update_song(song_id: UUID, data: schemas.SongUpdate, db: Session = Depends(get_db)):
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bài hát")
+    if data.title is not None:
+        song.title = data.title
+        song.title_normalized = normalize_vn(data.title)
+    if data.author is not None:
+        song.author = data.author or None
+    db.commit()
+    db.refresh(song)
+    return song
+
+
+# API: Thêm sheet nhạc vào bài hát
+@app.post("/api/songs/{song_id}/sheets", response_model=schemas.SongSheetResponse)
+def add_sheet(song_id: UUID, data: schemas.SongSheetCreate, db: Session = Depends(get_db)):
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bài hát")
+    sheet = models.SongSheet(
+        song_id=song_id,
+        sheet_drive_url=data.sheet_drive_url,
+        tone_male=data.tone_male,
+        tone_female=data.tone_female,
+        verified_at=datetime.now(timezone.utc),  # user-created = auto-verified
+    )
+    db.add(sheet)
+    db.commit()
+    db.refresh(sheet)
+    return sheet
+
+
+# API: Thêm lời bài hát thủ công
+@app.post("/api/songs/{song_id}/lyrics", response_model=schemas.SongLyricsResponse)
+def add_lyric(song_id: UUID, data: schemas.SongLyricsCreate, db: Session = Depends(get_db)):
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bài hát")
+    lyric = models.SongLyrics(
+        song_id=song_id,
+        lyrics=data.lyrics,
+        source_lyric=data.source_lyric,
+        composed_at=data.composed_at,
+        verified_at=datetime.now(timezone.utc),  # user-created = auto-verified
+    )
+    db.add(lyric)
+    db.commit()
+    db.refresh(lyric)
+    return lyric
+
+
+# API: Lấy lời bài hát từ AI
+@app.post("/api/songs/ai-fetch-lyrics")
+def ai_fetch_lyrics(title: str, author: str | None = None):
+    from utils.gemini import fetch_lyrics_from_gemini
+    try:
+        return fetch_lyrics_from_gemini(title, author)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# API: Generate a Google Slides presentation from saved lyrics
+@app.post("/api/songs/{song_id}/lyrics/{lyric_id}/generate-slide", response_model=schemas.SongLyricsResponse)
+def generate_lyric_slide(song_id: UUID, lyric_id: UUID, db: Session = Depends(get_db)):
+    lyric = db.query(models.SongLyrics).filter(
+        models.SongLyrics.id == lyric_id,
+        models.SongLyrics.song_id == song_id,
+        models.SongLyrics.deleted_at.is_(None),
+    ).first()
+    if not lyric:
+        raise HTTPException(status_code=404, detail="Lyric not found")
+
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+
+    import logging, traceback
+    from utils.slides import create_lyric_slide
+    try:
+        url = create_lyric_slide(song.title, song.author, lyric.lyrics)
+    except Exception as e:
+        logging.getLogger("slides").error("generate_lyric_slide error:\n%s", traceback.format_exc())
+        raise HTTPException(status_code=502, detail=f"Slide generation failed: {e}")
+
+    lyric.slide_drive_url = url
+    db.commit()
+    db.refresh(lyric)
+    return lyric
 
 
 # API: Tìm kiếm bài hát (phải đặt trước /{song_id} để tránh FastAPI bắt "search" như UUID)
