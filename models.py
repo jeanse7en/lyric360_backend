@@ -81,6 +81,7 @@ class QueueRegistration(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("live_sessions.id", ondelete="CASCADE"), nullable=False)
     song_id = Column(UUID(as_uuid=True), ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     singer_name = Column(String, nullable=False)
     booker_phone = Column(String)
     table_position = Column(String)
@@ -92,3 +93,4 @@ class QueueRegistration(Base):
 
     session = relationship("LiveSession", back_populates="registrations")
     song = relationship("Song")
+    user = relationship("User")

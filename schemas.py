@@ -110,6 +110,48 @@ class SongLyricsCreate(BaseModel):
     composed_at: Optional[datetime] = None
 
 
+# ── Sheet sync ──────────────────────────────────────────────────────────────
+
+class SyncPreviewItem(BaseModel):
+    row_number: int
+    song_title: str
+    author: Optional[str]
+    year: Optional[str]
+    lyrics_preview: Optional[str]   # first 200 chars
+    sheet_url: Optional[str]
+    lyric_slide_url: Optional[str]
+    song_id: Optional[UUID] = None  # None → new song
+    action: str                     # CREATE | UPDATE | SKIP
+    changes: list[str]              # human-readable change descriptions
+
+    class Config:
+        from_attributes = True
+
+
+class SyncPreviewResponse(BaseModel):
+    items: list[SyncPreviewItem]
+    total: int
+    to_create: int
+    to_update: int
+
+
+class SyncRunResult(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    errors: list[str]
+
+
+# User schemas
+class UserResponse(BaseModel):
+    id: UUID
+    name: str
+    phone_zalo: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 # Request khi khách gửi form đăng ký
 class QueueCreate(BaseModel):
     session_id: UUID
@@ -117,6 +159,7 @@ class QueueCreate(BaseModel):
     singer_name: str
     booker_phone: str
     table_position: Optional[str] = None
+    user_id: Optional[UUID] = None
 
 # Response trả về sau khi đăng ký thành công
 class QueueResponse(BaseModel):
@@ -124,6 +167,32 @@ class QueueResponse(BaseModel):
     singer_name: str
     status: str
     created_at: datetime
-    
+    order_number: int = 0
+    user_id: Optional[UUID] = None
+
     class Config:
         from_attributes = True
+
+
+class UserQueueItem(BaseModel):
+    registration_id: UUID
+    song_id: UUID
+    song_title: str
+    song_author: Optional[str] = None
+    slide_drive_url: Optional[str] = None
+    status: str
+    session_date: str
+
+    class Config:
+        from_attributes = True
+
+
+class UserExistingRegistration(BaseModel):
+    registration_id: UUID
+    song_id: UUID
+    song_title: str
+
+
+class SessionBookingInfo(BaseModel):
+    booked_song_ids: list[UUID]
+    user_registration: Optional[UserExistingRegistration] = None
