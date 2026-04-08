@@ -1,8 +1,9 @@
 import logging
 from datetime import date, datetime, timezone
+from typing import Optional
 from uuid import UUID
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
 from fastapi.middleware.cors import CORSMiddleware
@@ -292,6 +293,23 @@ def add_lyric(song_id: UUID, data: schemas.SongLyricsCreate, db: Session = Depen
         verified_at=datetime.now(timezone.utc),  # user-created = auto-verified
     )
     db.add(lyric)
+    db.commit()
+    db.refresh(lyric)
+    return lyric
+
+
+# API: Cập nhật lời bài hát
+@app.patch("/api/songs/{song_id}/lyrics/{lyric_id}", response_model=schemas.SongLyricsResponse)
+def update_lyric(song_id: UUID, lyric_id: UUID, data: schemas.SongLyricsUpdate, db: Session = Depends(get_db)):
+    lyric = db.query(models.SongLyrics).filter(
+        models.SongLyrics.id == lyric_id,
+        models.SongLyrics.song_id == song_id,
+        models.SongLyrics.deleted_at.is_(None),
+    ).first()
+    if not lyric:
+        raise HTTPException(status_code=404, detail="Lyric not found")
+    if data.lyrics is not None:
+        lyric.lyrics = data.lyrics
     db.commit()
     db.refresh(lyric)
     return lyric
@@ -681,9 +699,70 @@ def get_user(user_id: str, db: Session = Depends(get_db)):
     return user
 
 
+def _ingest_free_text_song(registration_id: UUID, title: str):
+    """Background task: create Song, AI-fetch lyrics, generate slide, link back to registration."""
+    import logging, traceback
+    from database import SessionLocal
+    from utils.gemini import fetch_lyrics_from_gemini
+    from utils.slides import create_lyric_slide
+
+    log = logging.getLogger("ingest_free_text")
+    db = SessionLocal()
+    try:
+        # 1. Create Song
+        song = models.Song(title=title, title_normalized=normalize_vn(title))
+        db.add(song)
+        db.flush()
+
+        # 2. Fetch lyrics via AI
+        try:
+            result = fetch_lyrics_from_gemini(title, author=None)
+            # fetch_lyrics_from_gemini returns a dict {title, author, year, lyrics}
+            if isinstance(result, dict):
+                lyrics_text = result.get("lyrics")
+                if not song.author and result.get("author"):
+                    song.author = result.get("author")
+            else:
+                lyrics_text = result
+        except Exception:
+            log.warning("AI lyrics fetch failed for '%s':\n%s", title, traceback.format_exc())
+            lyrics_text = None
+
+        slide_url = None
+        if lyrics_text:
+            # 3. Create SongLyrics
+            lyric = models.SongLyrics(
+                song_id=song.id,
+                lyrics=lyrics_text,
+                source_lyric="AI",
+            )
+            db.add(lyric)
+            db.flush()
+
+            # 4. Generate slide
+            try:
+                slide_url = create_lyric_slide(title, song.author, lyrics_text)
+                lyric.slide_drive_url = slide_url
+            except Exception:
+                log.warning("Slide generation failed for '%s':\n%s", title, traceback.format_exc())
+
+        # 5. Link registration back to new song
+        reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == registration_id).first()
+        if reg:
+            reg.song_id = song.id
+
+        db.commit()
+        log.info("Free-text song ingested: '%s' → song_id=%s slide=%s", title, song.id, slide_url)
+    except Exception:
+        db.rollback()
+        log.error("_ingest_free_text_song failed:\n%s", traceback.format_exc())
+    finally:
+        db.close()
+
+
 # API 2: Đăng ký bài hát mới vào hàng đợi
 @app.post("/api/queue/register", response_model=schemas.QueueResponse)
-def register_queue(queue_data: schemas.QueueCreate, db: Session = Depends(get_db)):
+def register_queue(queue_data: schemas.QueueCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     # 1. Kiểm tra session_id (Đêm diễn) có tồn tại và đang live không
     session_exists = db.query(models.LiveSession).filter(models.LiveSession.id == queue_data.session_id).first()
     if not session_exists:
@@ -691,18 +770,23 @@ def register_queue(queue_data: schemas.QueueCreate, db: Session = Depends(get_db
     if session_exists.status != "live":
         raise HTTPException(status_code=400, detail="Đêm diễn chưa bắt đầu hoặc đã kết thúc")
 
-    # 2. Kiểm tra bài hát có trong kho không
-    song_exists = db.query(models.Song).filter(models.Song.id == queue_data.song_id).first()
-    if not song_exists:
-        raise HTTPException(status_code=404, detail="Không tìm thấy bài hát này")
+    # 2. Validate: phải có song_id hoặc free_text_song_name
+    if not queue_data.song_id and not queue_data.free_text_song_name:
+        raise HTTPException(status_code=400, detail="Vui lòng chọn hoặc nhập tên bài hát")
 
-    # 3. Kiểm tra bài hát đã được đăng ký trong đêm diễn chưa
-    duplicate = db.query(models.QueueRegistration).filter(
-        models.QueueRegistration.session_id == queue_data.session_id,
-        models.QueueRegistration.song_id == queue_data.song_id,
-    ).first()
-    if duplicate:
-        raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
+    # 3. Kiểm tra bài hát có trong kho không (chỉ khi có song_id)
+    if queue_data.song_id:
+        song_exists = db.query(models.Song).filter(models.Song.id == queue_data.song_id).first()
+        if not song_exists:
+            raise HTTPException(status_code=404, detail="Không tìm thấy bài hát này")
+
+        # Kiểm tra bài hát đã được đăng ký trong đêm diễn chưa
+        duplicate = db.query(models.QueueRegistration).filter(
+            models.QueueRegistration.session_id == queue_data.session_id,
+            models.QueueRegistration.song_id == queue_data.song_id,
+        ).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
 
     # 4. Tìm hoặc tạo user
     user_id = queue_data.user_id
@@ -737,6 +821,7 @@ def register_queue(queue_data: schemas.QueueCreate, db: Session = Depends(get_db
     new_registration = models.QueueRegistration(
         session_id=queue_data.session_id,
         song_id=queue_data.song_id,
+        free_text_song_name=queue_data.free_text_song_name,
         user_id=user_id,
         singer_name=queue_data.singer_name,
         booker_phone=queue_data.booker_phone,
@@ -754,7 +839,11 @@ def register_queue(queue_data: schemas.QueueCreate, db: Session = Depends(get_db
         models.QueueRegistration.created_at <= new_registration.created_at,
     ).count()
 
-    # Ở đây sau này sẽ trigger background task để gửi tin nhắn Zalo
+    # Background: ingest free-text song (create Song → AI lyrics → Slide)
+    if queue_data.free_text_song_name and not queue_data.song_id:
+        background_tasks.add_task(_ingest_free_text_song, new_registration.id, queue_data.free_text_song_name)
+
+    # TODO: trigger Zalo notification
 
     result = schemas.QueueResponse(
         id=new_registration.id,
@@ -779,16 +868,25 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
     )
     result = []
     for reg in registrations:
-        lyric = next(
-            (l for l in reg.song.lyrics if l.deleted_at is None and l.slide_drive_url),
-            None,
-        )
+        if reg.song:
+            lyric = next(
+                (l for l in reg.song.lyrics if l.deleted_at is None and l.slide_drive_url),
+                None,
+            )
+            title = reg.song.title
+            author = reg.song.author
+            slide_url = lyric.slide_drive_url if lyric else None
+        else:
+            # free-text song not yet ingested by background task
+            title = reg.free_text_song_name or ""
+            author = None
+            slide_url = None
         result.append(schemas.UserQueueItem(
             registration_id=reg.id,
             song_id=reg.song_id,
-            song_title=reg.song.title,
-            song_author=reg.song.author,
-            slide_drive_url=lyric.slide_drive_url if lyric else None,
+            song_title=title,
+            song_author=author,
+            slide_drive_url=slide_url,
             status=reg.status,
             session_date=str(reg.session.session_date),
         ))
@@ -803,15 +901,16 @@ def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db:
         .filter(models.QueueRegistration.session_id == session_id)
         .all()
     )
-    booked_song_ids = [reg.song_id for reg in registrations]
+    booked_song_ids = [reg.song_id for reg in registrations if reg.song_id is not None]
     user_registration = None
     if user_id:
         user_reg = next((r for r in registrations if str(r.user_id) == user_id), None)
         if user_reg:
+            song_title = user_reg.song.title if user_reg.song else (user_reg.free_text_song_name or "")
             user_registration = schemas.UserExistingRegistration(
                 registration_id=user_reg.id,
                 song_id=user_reg.song_id,
-                song_title=user_reg.song.title,
+                song_title=song_title,
             )
     return schemas.SessionBookingInfo(booked_song_ids=booked_song_ids, user_registration=user_registration)
 

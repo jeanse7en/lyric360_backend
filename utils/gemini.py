@@ -57,7 +57,33 @@ def fetch_lyrics_from_gemini(title: str, author: str | None = None) -> dict:
     if not json_match:
         raise ValueError(f"No JSON found in response: {ai_text[:200]}")
 
+    raw = json_match.group(0)
     try:
-        return json.loads(json_match.group(0))
-    except json.JSONDecodeError as e:
-        raise ValueError(f"JSON parse error: {e}\nText: {json_match.group(0)[:200]}")
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: extract fields individually when lyrics contain unescaped quotes
+    def _extract_field(text: str, key: str) -> str:
+        # Match "key": "value" where value runs until the next field or closing brace
+        pattern = rf'"{key}"\s*:\s*"([\s\S]*?)"(?=\s*(?:,\s*"|\s*\}}))'
+        m = re.search(pattern, text)
+        return m.group(1) if m else ""
+
+    title_val = _extract_field(raw, "title")
+    author_val = _extract_field(raw, "author")
+    year_val = _extract_field(raw, "year")
+
+    # lyrics is the last field — grab everything between "lyrics": " and the final closing "
+    lyrics_m = re.search(r'"lyrics"\s*:\s*"([\s\S]*?)"\s*\}?\s*$', raw)
+    lyrics_val = lyrics_m.group(1) if lyrics_m else ""
+
+    if not lyrics_val:
+        raise ValueError(f"Could not parse Gemini response: {raw[:200]}")
+
+    return {
+        "title": title_val,
+        "author": author_val,
+        "year": year_val,
+        "lyrics": lyrics_val.replace("\\n", "\n"),
+    }

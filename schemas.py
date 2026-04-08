@@ -17,6 +17,10 @@ class SongSheetResponse(BaseModel):
         from_attributes = True
 
 
+class SongLyricsUpdate(BaseModel):
+    lyrics: Optional[str] = None
+
+
 class SongLyricsResponse(BaseModel):
     id: UUID
     lyrics: str
@@ -155,7 +159,8 @@ class UserResponse(BaseModel):
 # Request khi khách gửi form đăng ký
 class QueueCreate(BaseModel):
     session_id: UUID
-    song_id: UUID
+    song_id: Optional[UUID] = None
+    free_text_song_name: Optional[str] = None
     singer_name: str
     booker_phone: str
     table_position: Optional[str] = None
@@ -176,7 +181,7 @@ class QueueResponse(BaseModel):
 
 class UserQueueItem(BaseModel):
     registration_id: UUID
-    song_id: UUID
+    song_id: Optional[UUID] = None
     song_title: str
     song_author: Optional[str] = None
     slide_drive_url: Optional[str] = None
@@ -189,7 +194,7 @@ class UserQueueItem(BaseModel):
 
 class UserExistingRegistration(BaseModel):
     registration_id: UUID
-    song_id: UUID
+    song_id: Optional[UUID] = None
     song_title: str
 
 
