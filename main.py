@@ -54,12 +54,10 @@ def get_all_sessions(
         song_ids_with_unverified = (
             db.query(models.SongLyrics.song_id).filter(
                 models.SongLyrics.verified_at.is_(None),
-                models.SongLyrics.deleted_at.is_(None),
                 models.SongLyrics.song_id.in_([r.song_id for r in s.registrations]),
             ).union(
                 db.query(models.SongSheet.song_id).filter(
                     models.SongSheet.verified_at.is_(None),
-                    models.SongSheet.deleted_at.is_(None),
                     models.SongSheet.song_id.in_([r.song_id for r in s.registrations]),
                 )
             ).distinct().count()
@@ -223,7 +221,7 @@ def get_songs_manage(q: str | None = None, verify_status: str | None = None, off
 @app.get("/api/songs/unverified-count", response_model=schemas.UnverifiedCountResponse)
 def get_unverified_count(db: Session = Depends(get_db)):
     from sqlalchemy import func
-    unverified_lyrics = db.query(models.SongLyrics.song_id).filter(models.SongLyrics.verified_at.is_(None), models.SongLyrics.deleted_at.is_(None)).distinct()
+    unverified_lyrics = db.query(models.SongLyrics.song_id).filter(models.SongLyrics.verified_at.is_(None)).distinct()
     unverified_sheets = db.query(models.SongSheet.song_id).filter(models.SongSheet.verified_at.is_(None)).distinct()
     song_ids = unverified_lyrics.union(unverified_sheets).subquery()
     count = db.query(func.count()).select_from(song_ids).scalar()
@@ -304,7 +302,6 @@ def update_lyric(song_id: UUID, lyric_id: UUID, data: schemas.SongLyricsUpdate, 
     lyric = db.query(models.SongLyrics).filter(
         models.SongLyrics.id == lyric_id,
         models.SongLyrics.song_id == song_id,
-        models.SongLyrics.deleted_at.is_(None),
     ).first()
     if not lyric:
         raise HTTPException(status_code=404, detail="Lyric not found")
@@ -331,7 +328,6 @@ def generate_lyric_slide(song_id: UUID, lyric_id: UUID, db: Session = Depends(ge
     lyric = db.query(models.SongLyrics).filter(
         models.SongLyrics.id == lyric_id,
         models.SongLyrics.song_id == song_id,
-        models.SongLyrics.deleted_at.is_(None),
     ).first()
     if not lyric:
         raise HTTPException(status_code=404, detail="Lyric not found")
@@ -375,8 +371,6 @@ def sync_preview(
             .options(
                 selectinload(models.Song.sheets),
                 selectinload(models.Song.lyrics),
-                with_loader_criteria(models.SongLyrics, models.SongLyrics.deleted_at.is_(None)),
-                with_loader_criteria(models.SongSheet, models.SongSheet.deleted_at.is_(None)),
             )
             .filter(models.Song.title_normalized == title_norm)
             .first()
@@ -402,7 +396,7 @@ def sync_preview(
                 changes.append("Cập nhật tác giả")
 
             if row["year"]:
-                active_lyric = next((l for l in song.lyrics if l.deleted_at is None), None)
+                active_lyric = next(iter(song.lyrics), None)
                 existing_year = (
                     str(active_lyric.composed_at.year)
                     if active_lyric and active_lyric.composed_at
@@ -418,7 +412,7 @@ def sync_preview(
                 changes.append("Cập nhật link slide lyric")
 
             if row["sheet_url"]:
-                active_sheet = next((s for s in song.sheets if s.deleted_at is None), None)
+                active_sheet = next(iter(song.sheets), None)
                 if not active_sheet or active_sheet.sheet_drive_url != row["sheet_url"]:
                     changes.append("Cập nhật sheet nhạc")
 
@@ -530,9 +524,8 @@ def sync_run(
                     changed = True
 
                 if row["lyrics"]:
-                    for lyr in song.lyrics:
-                        if lyr.deleted_at is None:
-                            lyr.deleted_at = datetime.now(timezone.utc)
+                    for lyr in list(song.lyrics):
+                        db.delete(lyr)
                     db.add(
                         models.SongLyrics(
                             song_id=song.id,
@@ -546,9 +539,8 @@ def sync_run(
                     changed = True
 
                 if row["sheet_url"]:
-                    for sht in song.sheets:
-                        if sht.deleted_at is None:
-                            sht.deleted_at = datetime.now(timezone.utc)
+                    for sht in list(song.sheets):
+                        db.delete(sht)
                     db.add(
                         models.SongSheet(
                             song_id=song.id,
@@ -645,7 +637,6 @@ def verify_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
     sheet = db.query(models.SongSheet).filter(
         models.SongSheet.id == sheet_id,
         models.SongSheet.song_id == song_id,
-        models.SongSheet.deleted_at.is_(None),
     ).first()
     if not sheet:
         raise HTTPException(status_code=404, detail="Không tìm thấy sheet")
@@ -868,7 +859,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
     result = []
     for reg in registrations:
         if reg.song:
-            active_lyrics = [l for l in reg.song.lyrics if l.deleted_at is None]
+            active_lyrics = list(reg.song.lyrics)
             lyric_with_slide = next((l for l in active_lyrics if l.slide_drive_url), None)
             lyric_with_text  = next((l for l in active_lyrics if l.lyrics), None)
             title = reg.song.title
