@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, date
 
@@ -164,6 +164,7 @@ class QueueCreate(BaseModel):
     singer_name: str
     booker_phone: str
     table_position: Optional[str] = None
+    drinks: Optional[List[str]] = []
     user_id: Optional[UUID] = None
 
 # Response trả về sau khi đăng ký thành công
@@ -185,11 +186,22 @@ class UserQueueItem(BaseModel):
     song_title: str
     song_author: Optional[str] = None
     slide_drive_url: Optional[str] = None
+    lyric_id: Optional[UUID] = None
+    lyrics_text: Optional[str] = None
     status: str
     session_date: str
+    session_id: UUID
+    drinks: List[str] = []
 
     class Config:
         from_attributes = True
+
+
+class QueueUpdate(BaseModel):
+    session_id: Optional[UUID] = None
+    song_id: Optional[UUID] = None
+    free_text_song_name: Optional[str] = None
+    drinks: Optional[List[str]] = None
 
 
 class UserExistingRegistration(BaseModel):

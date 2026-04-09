@@ -626,20 +626,17 @@ def verify_lyric(song_id: UUID, lyric_id: UUID, db: Session = Depends(get_db)):
     return lyric
 
 
-# API: Xóa mềm một lyric
-@app.delete("/api/songs/{song_id}/lyrics/{lyric_id}", response_model=schemas.SongLyricsResponse)
+# API: Xóa một lyric
+@app.delete("/api/songs/{song_id}/lyrics/{lyric_id}", status_code=204)
 def delete_lyric(song_id: UUID, lyric_id: UUID, db: Session = Depends(get_db)):
     lyric = db.query(models.SongLyrics).filter(
         models.SongLyrics.id == lyric_id,
         models.SongLyrics.song_id == song_id,
-        models.SongLyrics.deleted_at.is_(None),
     ).first()
     if not lyric:
         raise HTTPException(status_code=404, detail="Không tìm thấy lyric")
-    lyric.deleted_at = datetime.now(timezone.utc)
+    db.delete(lyric)
     db.commit()
-    db.refresh(lyric)
-    return lyric
 
 
 # API: Verify một sheet
@@ -658,20 +655,17 @@ def verify_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
     return sheet
 
 
-# API: Xóa mềm một sheet
-@app.delete("/api/songs/{song_id}/sheets/{sheet_id}", response_model=schemas.SongSheetResponse)
+# API: Xóa một sheet
+@app.delete("/api/songs/{song_id}/sheets/{sheet_id}", status_code=204)
 def delete_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
     sheet = db.query(models.SongSheet).filter(
         models.SongSheet.id == sheet_id,
         models.SongSheet.song_id == song_id,
-        models.SongSheet.deleted_at.is_(None),
     ).first()
     if not sheet:
         raise HTTPException(status_code=404, detail="Không tìm thấy sheet")
-    sheet.deleted_at = datetime.now(timezone.utc)
+    db.delete(sheet)
     db.commit()
-    db.refresh(sheet)
-    return sheet
 
 
 # API 1: Hỗ trợ Paging và Load mặc định
@@ -830,6 +824,7 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         singer_name=queue_data.singer_name,
         booker_phone=queue_data.booker_phone,
         table_position=queue_data.table_position,
+        drinks=queue_data.drinks or [],
         status="waiting"
     )
 
@@ -873,28 +868,73 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
     result = []
     for reg in registrations:
         if reg.song:
-            lyric = next(
-                (l for l in reg.song.lyrics if l.deleted_at is None and l.slide_drive_url),
-                None,
-            )
+            active_lyrics = [l for l in reg.song.lyrics if l.deleted_at is None]
+            lyric_with_slide = next((l for l in active_lyrics if l.slide_drive_url), None)
+            lyric_with_text  = next((l for l in active_lyrics if l.lyrics), None)
             title = reg.song.title
             author = reg.song.author
-            slide_url = lyric.slide_drive_url if lyric else None
+            slide_url = lyric_with_slide.slide_drive_url if lyric_with_slide else None
+            lyric_id = lyric_with_text.id if lyric_with_text else None
+            lyrics_text = lyric_with_text.lyrics if lyric_with_text else None
         else:
             # free-text song not yet ingested by background task
             title = reg.free_text_song_name or ""
             author = None
             slide_url = None
+            lyric_id = None
+            lyrics_text = None
         result.append(schemas.UserQueueItem(
             registration_id=reg.id,
             song_id=reg.song_id,
             song_title=title,
             song_author=author,
             slide_drive_url=slide_url,
+            lyric_id=lyric_id,
+            lyrics_text=lyrics_text,
             status=reg.status,
             session_date=str(reg.session.session_date),
+            session_id=reg.session_id,
+            drinks=reg.drinks or [],
         ))
     return result
+
+
+@app.patch("/api/queue/registrations/{reg_id}")
+def update_queue_registration(reg_id: str, update: schemas.QueueUpdate, db: Session = Depends(get_db)):
+    reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == reg_id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
+    if reg.status == "done":
+        raise HTTPException(status_code=400, detail="Không thể sửa bài đã hát xong")
+
+    if update.session_id and str(update.session_id) != str(reg.session_id):
+        session = db.query(models.LiveSession).filter(models.LiveSession.id == update.session_id).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đêm diễn")
+        if session.status == "ended":
+            raise HTTPException(status_code=400, detail="Đêm diễn đã kết thúc")
+        reg.session_id = update.session_id
+
+    if update.song_id is not None and str(update.song_id) != str(reg.song_id):
+        duplicate = db.query(models.QueueRegistration).filter(
+            models.QueueRegistration.session_id == reg.session_id,
+            models.QueueRegistration.song_id == update.song_id,
+            models.QueueRegistration.id != reg.id,
+        ).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
+        reg.song_id = update.song_id
+        reg.free_text_song_name = None
+
+    if update.free_text_song_name is not None:
+        reg.free_text_song_name = update.free_text_song_name
+        reg.song_id = None
+
+    if update.drinks is not None:
+        reg.drinks = update.drinks
+
+    db.commit()
+    return {"ok": True}
 
 
 # Lấy thông tin đặt chỗ trong một session: danh sách song_id đã đặt + đăng ký của user (nếu có)

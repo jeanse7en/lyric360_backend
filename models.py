@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, Text, Date, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -42,7 +42,6 @@ class SongSheet(Base):
     tone_male = Column(String)
     tone_female = Column(String)
     verified_at = Column(DateTime(timezone=True), nullable=True)
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     song = relationship("Song", back_populates="sheets")
@@ -57,7 +56,6 @@ class SongLyrics(Base):
     source_lyric = Column(String, nullable=False, default="MANUAL")
     composed_at = Column(DateTime(timezone=True), nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     song = relationship("Song", back_populates="lyrics")
@@ -86,6 +84,7 @@ class QueueRegistration(Base):
     singer_name = Column(String, nullable=False)
     booker_phone = Column(String)
     table_position = Column(String)
+    drinks = Column(ARRAY(String), default=[])
     status = Column(String, default="waiting")
     actual_start = Column(DateTime(timezone=True))
     actual_end = Column(DateTime(timezone=True))
