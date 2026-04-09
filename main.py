@@ -355,7 +355,7 @@ def sync_preview(
     spreadsheet_id: str | None = None,
     db: Session = Depends(get_db),
 ):
-    from sqlalchemy.orm import with_loader_criteria
+
     from utils.sheets import read_sheet_rows
 
     try:
@@ -449,7 +449,7 @@ def sync_run(
     spreadsheet_id: str | None = None,
     db: Session = Depends(get_db),
 ):
-    from sqlalchemy.orm import with_loader_criteria
+
     from utils.sheets import read_sheet_rows
 
     try:
@@ -468,8 +468,6 @@ def sync_run(
                 .options(
                     selectinload(models.Song.sheets),
                     selectinload(models.Song.lyrics),
-                    with_loader_criteria(models.SongLyrics, models.SongLyrics.deleted_at.is_(None)),
-                    with_loader_criteria(models.SongSheet, models.SongSheet.deleted_at.is_(None)),
                 )
                 .filter(models.Song.title_normalized == title_norm)
                 .first()
@@ -585,14 +583,11 @@ def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Ses
 # API: Chi tiết một bài hát (full lyrics + sheets)
 @app.get("/api/songs/{song_id}", response_model=schemas.SongResponse)
 def get_song(song_id: UUID, db: Session = Depends(get_db)):
-    from sqlalchemy.orm import with_loader_criteria
     song = (
         db.query(models.Song)
         .options(
             selectinload(models.Song.sheets),
             selectinload(models.Song.lyrics),
-            with_loader_criteria(models.SongLyrics, models.SongLyrics.deleted_at.is_(None)),
-            with_loader_criteria(models.SongSheet, models.SongSheet.deleted_at.is_(None)),
         )
         .filter(models.Song.id == song_id)
         .first()
@@ -608,7 +603,6 @@ def verify_lyric(song_id: UUID, lyric_id: UUID, db: Session = Depends(get_db)):
     lyric = db.query(models.SongLyrics).filter(
         models.SongLyrics.id == lyric_id,
         models.SongLyrics.song_id == song_id,
-        models.SongLyrics.deleted_at.is_(None),
     ).first()
     if not lyric:
         raise HTTPException(status_code=404, detail="Không tìm thấy lyric")

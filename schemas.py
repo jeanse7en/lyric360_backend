@@ -10,7 +10,6 @@ class SongSheetResponse(BaseModel):
     tone_male: Optional[str] = None
     tone_female: Optional[str] = None
     verified_at: Optional[datetime] = None
-    deleted_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
@@ -28,7 +27,6 @@ class SongLyricsResponse(BaseModel):
     source_lyric: str = "MANUAL"
     composed_at: Optional[datetime] = None
     verified_at: Optional[datetime] = None
-    deleted_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
