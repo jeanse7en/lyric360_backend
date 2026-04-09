@@ -314,12 +314,15 @@ def update_lyric(song_id: UUID, lyric_id: UUID, data: schemas.SongLyricsUpdate, 
 
 # API: Lấy lời bài hát từ AI
 @app.post("/api/songs/ai-fetch-lyrics")
-def ai_fetch_lyrics(title: str, author: str | None = None):
+async def ai_fetch_lyrics(title: str, author: str | None = None):
     from utils.gemini import fetch_lyrics_from_gemini
+    import asyncio
     try:
-        return fetch_lyrics_from_gemini(title, author)
+        return await asyncio.to_thread(fetch_lyrics_from_gemini, title, author)
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
 
 
 # API: Generate a Google Slides presentation from saved lyrics

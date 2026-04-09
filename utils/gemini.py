@@ -40,7 +40,7 @@ def fetch_lyrics_from_gemini(title: str, author: str | None = None) -> dict:
 
     url = f"{GEMINI_URL}?key={GEMINI_API_KEY}"
 
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=90) as client:
         response = client.post(url, json=payload)
         response.raise_for_status()
 
