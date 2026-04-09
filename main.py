@@ -681,9 +681,13 @@ def delete_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
 def search_users(q: str = "", db: Session = Depends(get_db)):
     if not q.strip():
         return []
+    q_like = f"%{q.strip()}%"
     return (
         db.query(models.User)
-        .filter(models.User.name.ilike(f"%{q.strip()}%"))
+        .filter(
+            models.User.name.ilike(q_like) |
+            models.User.phone_zalo.ilike(q_like)
+        )
         .order_by(models.User.name)
         .limit(10)
         .all()
@@ -767,8 +771,8 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
     session_exists = db.query(models.LiveSession).filter(models.LiveSession.id == queue_data.session_id).first()
     if not session_exists:
         raise HTTPException(status_code=404, detail="Không tìm thấy đêm diễn này")
-    if session_exists.status != "live":
-        raise HTTPException(status_code=400, detail="Đêm diễn chưa bắt đầu hoặc đã kết thúc")
+    if session_exists.status == "ended":
+        raise HTTPException(status_code=400, detail="Đêm diễn đã kết thúc")
 
     # 2. Validate: phải có song_id hoặc free_text_song_name
     if not queue_data.song_id and not queue_data.free_text_song_name:
