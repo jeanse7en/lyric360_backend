@@ -29,6 +29,7 @@ class Song(Base):
     title_normalized = Column(String, nullable=True)
     author = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     sheets = relationship("SongSheet", back_populates="song", cascade="all, delete-orphan")
     lyrics = relationship("SongLyrics", back_populates="song", cascade="all, delete-orphan")

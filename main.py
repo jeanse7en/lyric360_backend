@@ -188,7 +188,7 @@ def get_songs_manage(
     limit: int = 20,
     db: Session = Depends(get_db),
 ):
-    query = db.query(models.Song)
+    query = db.query(models.Song).filter(models.Song.deleted_at.is_(None))
     if q and q.strip():
         query = query.filter(
             models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
@@ -269,6 +269,16 @@ def get_songs_manage(
         )
         for song in songs
     ]
+
+
+# API: Xoá mềm bài hát
+@app.delete("/api/songs/{song_id}", status_code=204)
+def delete_song(song_id: UUID, db: Session = Depends(get_db)):
+    song = db.query(models.Song).filter(models.Song.id == song_id, models.Song.deleted_at.is_(None)).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+    song.deleted_at = datetime.now(timezone.utc)
+    db.commit()
 
 
 # API: Đếm tổng số bài có lyric/sheet chưa được verify
