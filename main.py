@@ -7,6 +7,7 @@ from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 import models
@@ -174,7 +175,19 @@ def get_available_sessions(db: Session = Depends(get_db)):
 # API: Quản lý bài hát — danh sách kèm số lượng lyric/sheet và số chưa verify
 # verify_status: UNVERIFIED_ALL | UNVERIFIED_LYRIC | UNVERIFIED_SHEET | VERIFIED
 @app.get("/api/songs/manage", response_model=list[schemas.SongManageItem])
-def get_songs_manage(q: str | None = None, verify_status: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+def get_songs_manage(
+    q: str | None = None,
+    verify_status: str | None = None,
+    min_lyric_count: int | None = None,
+    max_lyric_count: int | None = None,
+    min_sheet_count: int | None = None,
+    max_sheet_count: int | None = None,
+    min_lyric_chars: int | None = None,
+    max_lyric_chars: int | None = None,
+    offset: int = 0,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
     query = db.query(models.Song)
     if q and q.strip():
         query = query.filter(
@@ -194,6 +207,45 @@ def get_songs_manage(q: str | None = None, verify_status: str | None = None, off
             ~models.Song.lyrics.any(models.SongLyrics.verified_at.is_(None)),
             ~models.Song.sheets.any(models.SongSheet.verified_at.is_(None)),
         )
+
+    # Lyric / sheet count filters — push to DB via correlated subqueries
+    if min_lyric_count is not None or max_lyric_count is not None:
+        lyric_cnt_sq = (
+            select(func.count(models.SongLyrics.id))
+            .where(models.SongLyrics.song_id == models.Song.id)
+            .correlate(models.Song)
+            .scalar_subquery()
+        )
+        if min_lyric_count is not None:
+            query = query.filter(lyric_cnt_sq >= min_lyric_count)
+        if max_lyric_count is not None:
+            query = query.filter(lyric_cnt_sq <= max_lyric_count)
+
+    if min_sheet_count is not None or max_sheet_count is not None:
+        sheet_cnt_sq = (
+            select(func.count(models.SongSheet.id))
+            .where(models.SongSheet.song_id == models.Song.id)
+            .correlate(models.Song)
+            .scalar_subquery()
+        )
+        if min_sheet_count is not None:
+            query = query.filter(sheet_cnt_sq >= min_sheet_count)
+        if max_sheet_count is not None:
+            query = query.filter(sheet_cnt_sq <= max_sheet_count)
+
+    # Lyric char-length filter — use DB char_length() to avoid loading full text into Python
+    if min_lyric_chars is not None or max_lyric_chars is not None:
+        max_chars_sq = (
+            select(func.max(func.char_length(models.SongLyrics.lyrics)))
+            .where(models.SongLyrics.song_id == models.Song.id)
+            .correlate(models.Song)
+            .scalar_subquery()
+        )
+        if min_lyric_chars is not None:
+            query = query.filter(max_chars_sq >= min_lyric_chars)
+        if max_lyric_chars is not None:
+            query = query.filter(max_chars_sq <= max_lyric_chars)
+
     songs = (
         query
         .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
@@ -202,19 +254,21 @@ def get_songs_manage(q: str | None = None, verify_status: str | None = None, off
         .limit(limit)
         .all()
     )
-    result = []
-    for song in songs:
-        unverified = sum(1 for s in song.sheets if s.verified_at is None) + \
-                     sum(1 for l in song.lyrics if l.verified_at is None)
-        result.append(schemas.SongManageItem(
+
+    return [
+        schemas.SongManageItem(
             id=song.id,
             title=song.title,
             author=song.author,
             lyric_count=len(song.lyrics),
             sheet_count=len(song.sheets),
-            unverified_count=unverified,
-        ))
-    return result
+            unverified_count=(
+                sum(1 for s in song.sheets if s.verified_at is None) +
+                sum(1 for l in song.lyrics if l.verified_at is None)
+            ),
+        )
+        for song in songs
+    ]
 
 
 # API: Đếm tổng số bài có lyric/sheet chưa được verify
