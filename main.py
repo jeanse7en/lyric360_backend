@@ -184,15 +184,22 @@ def get_songs_manage(
     max_sheet_count: int | None = None,
     min_lyric_chars: int | None = None,
     max_lyric_chars: int | None = None,
+    search_lyric: bool = False,
     offset: int = 0,
     limit: int = 20,
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Song).filter(models.Song.deleted_at.is_(None))
     if q and q.strip():
-        query = query.filter(
-            models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
-        )
+        q_norm = normalize_vn(q.strip())
+        title_match = models.Song.title_normalized.ilike(f"%{q_norm}%")
+        if search_lyric:
+            lyric_match = models.Song.lyrics.any(
+                models.SongLyrics.lyrics.ilike(f"%{q.strip()}%")
+            )
+            query = query.filter(title_match | lyric_match)
+        else:
+            query = query.filter(title_match)
     if verify_status == "UNVERIFIED_LYRIC":
         query = query.filter(models.Song.lyrics.any(models.SongLyrics.verified_at.is_(None)))
     elif verify_status == "UNVERIFIED_SHEET":
