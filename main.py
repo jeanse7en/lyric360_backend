@@ -865,10 +865,11 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         if not song_exists:
             raise HTTPException(status_code=404, detail="Không tìm thấy bài hát này")
 
-        # Kiểm tra bài hát đã được đăng ký trong đêm diễn chưa
+        # Kiểm tra bài hát đã được đăng ký trong đêm diễn chưa (bỏ qua bài đã hát xong)
         duplicate = db.query(models.QueueRegistration).filter(
             models.QueueRegistration.session_id == queue_data.session_id,
             models.QueueRegistration.song_id == queue_data.song_id,
+            models.QueueRegistration.status != "done",
         ).first()
         if duplicate:
             raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
@@ -1007,6 +1008,7 @@ def update_queue_registration(reg_id: str, update: schemas.QueueUpdate, db: Sess
             models.QueueRegistration.session_id == reg.session_id,
             models.QueueRegistration.song_id == update.song_id,
             models.QueueRegistration.id != reg.id,
+            models.QueueRegistration.status != "done",
         ).first()
         if duplicate:
             raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
@@ -1040,7 +1042,10 @@ def delete_queue_registration(reg_id: str, db: Session = Depends(get_db)):
 def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db: Session = Depends(get_db)):
     registrations = (
         db.query(models.QueueRegistration)
-        .filter(models.QueueRegistration.session_id == session_id)
+        .filter(
+            models.QueueRegistration.session_id == session_id,
+            models.QueueRegistration.status != "done",
+        )
         .all()
     )
     booked_song_ids = [reg.song_id for reg in registrations if reg.song_id is not None]
