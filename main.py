@@ -185,6 +185,7 @@ def get_songs_manage(
     min_lyric_chars: int | None = None,
     max_lyric_chars: int | None = None,
     search_lyric: bool = False,
+    sort_by: str = "last_viewed_at",
     offset: int = 0,
     limit: int = 20,
     db: Session = Depends(get_db),
@@ -253,10 +254,35 @@ def get_songs_manage(
         if max_lyric_chars is not None:
             query = query.filter(max_chars_sq <= max_lyric_chars)
 
+    if sort_by == "title":
+        order = models.Song.title_normalized.asc()
+    elif sort_by == "created_at":
+        order = models.Song.created_at.desc()
+    elif sort_by == "last_updated_at":
+        last_lyric_sq = (
+            select(func.max(models.SongLyrics.created_at))
+            .where(models.SongLyrics.song_id == models.Song.id)
+            .correlate(models.Song)
+            .scalar_subquery()
+        )
+        last_sheet_sq = (
+            select(func.max(models.SongSheet.created_at))
+            .where(models.SongSheet.song_id == models.Song.id)
+            .correlate(models.Song)
+            .scalar_subquery()
+        )
+        order = func.greatest(
+            models.Song.created_at,
+            func.coalesce(last_lyric_sq, models.Song.created_at),
+            func.coalesce(last_sheet_sq, models.Song.created_at),
+        ).desc()
+    else:  # last_viewed_at (default)
+        order = models.Song.last_viewed_at.desc().nulls_last()
+
     songs = (
         query
         .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
-        .order_by(models.Song.title)
+        .order_by(order)
         .offset(offset)
         .limit(limit)
         .all()
@@ -668,6 +694,8 @@ def get_song(song_id: UUID, db: Session = Depends(get_db)):
     )
     if not song:
         raise HTTPException(status_code=404, detail="Không tìm thấy bài hát")
+    song.last_viewed_at = datetime.now(timezone.utc)
+    db.commit()
     return song
 
 
@@ -994,6 +1022,17 @@ def update_queue_registration(reg_id: str, update: schemas.QueueUpdate, db: Sess
 
     db.commit()
     return {"ok": True}
+
+
+@app.delete("/api/queue/registrations/{reg_id}", status_code=204)
+def delete_queue_registration(reg_id: str, db: Session = Depends(get_db)):
+    reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == reg_id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
+    if reg.status == "done":
+        raise HTTPException(status_code=400, detail="Không thể xoá bài đã hát xong")
+    db.delete(reg)
+    db.commit()
 
 
 # Lấy thông tin đặt chỗ trong một session: danh sách song_id đã đặt + đăng ký của user (nếu có)
