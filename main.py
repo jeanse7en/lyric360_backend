@@ -3,7 +3,10 @@ from datetime import date, datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException
+import os
+import tempfile
+
+from fastapi import BackgroundTasks, FastAPI, Depends, File, HTTPException, UploadFile
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
 from fastapi.middleware.cors import CORSMiddleware
@@ -1035,6 +1038,79 @@ def delete_queue_registration(reg_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Không thể xoá bài đã hát xong")
     db.delete(reg)
     db.commit()
+
+
+# ── Video cutting ─────────────────────────────────────────────────────────────
+
+@app.get("/api/sessions/{session_id}/video-segments", response_model=schemas.SessionVideoResponse)
+def get_session_video_segments(session_id: str, db: Session = Depends(get_db)):
+    session = db.query(models.LiveSession).filter(models.LiveSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy buổi diễn")
+
+    regs = (
+        db.query(models.QueueRegistration)
+        .filter(
+            models.QueueRegistration.session_id == session_id,
+            models.QueueRegistration.actual_start.isnot(None),
+            models.QueueRegistration.actual_end.isnot(None),
+        )
+        .order_by(models.QueueRegistration.actual_start)
+        .all()
+    )
+
+    # Use camera_start as reference; fall back to first actual_start
+    reference = session.camera_start
+    if reference is None and regs:
+        reference = regs[0].actual_start
+
+    segments = []
+    for reg in regs:
+        duration_sec = (reg.actual_end - reg.actual_start).total_seconds()
+        if duration_sec <= 0:
+            continue
+        song_title = (reg.song.title if reg.song else None) or reg.free_text_song_name or "Không rõ"
+        segments.append(schemas.VideoSegmentResponse(
+            registration_id=reg.id,
+            song_title=song_title,
+            singer_name=reg.singer_name,
+            actual_start_iso=reg.actual_start.isoformat(),
+            actual_end_iso=reg.actual_end.isoformat(),
+            video_url=reg.video_url,
+        ))
+
+    return schemas.SessionVideoResponse(
+        session_id=session.id,
+        camera_start=session.camera_start,
+        segments=segments,
+    )
+
+
+@app.post("/api/queue/registrations/{reg_id}/video-url")
+async def upload_registration_video(reg_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    from utils.drive import upload_video_to_drive
+
+    reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == reg_id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
+
+    song_title = (reg.song.title if reg.song else None) or reg.free_text_song_name or "unknown"
+    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in song_title)[:50]
+    safe_singer = "".join(c if c.isalnum() or c in " _-" else "_" for c in reg.singer_name)[:30]
+    filename = f"{safe_title}_{safe_singer}.mp4"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        video_url = upload_video_to_drive(tmp_path, filename)
+        reg.video_url = video_url
+        db.commit()
+        return {"video_url": video_url}
+    finally:
+        os.unlink(tmp_path)
 
 
 # Lấy thông tin đặt chỗ trong một session: danh sách song_id đã đặt + đăng ký của user (nếu có)

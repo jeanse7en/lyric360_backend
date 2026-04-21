@@ -211,3 +211,23 @@ class UserExistingRegistration(BaseModel):
 class SessionBookingInfo(BaseModel):
     booked_song_ids: list[UUID]
     user_registration: Optional[UserExistingRegistration] = None
+
+
+# ── Video cutting ────────────────────────────────────────────────────────────
+
+class VideoSegmentResponse(BaseModel):
+    registration_id: UUID
+    song_title: str
+    singer_name: str
+    actual_start_iso: str
+    actual_end_iso: str
+    video_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SessionVideoResponse(BaseModel):
+    session_id: UUID
+    camera_start: Optional[datetime] = None
+    segments: list[VideoSegmentResponse]
