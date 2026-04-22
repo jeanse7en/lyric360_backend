@@ -72,6 +72,7 @@ class LiveSession(Base):
     camera_start = Column(DateTime(timezone=True))
     started_at = Column(DateTime(timezone=True), nullable=True)
     ended_at = Column(DateTime(timezone=True), nullable=True)
+    video_folder_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     registrations = relationship("QueueRegistration", back_populates="session", cascade="all, delete-orphan")

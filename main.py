@@ -1088,16 +1088,43 @@ def get_session_video_segments(session_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/queue/registrations/{reg_id}/video-url")
 async def upload_registration_video(reg_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    from utils.drive import upload_video_to_drive
+    import re as _re
+    from utils.drive import create_session_folder, upload_video_to_drive, delete_drive_file
 
     reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == reg_id).first()
     if not reg:
         raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
 
+    session = reg.session
+
+    # Reuse existing folder or create a new one
+    if session.video_folder_id:
+        folder_id = session.video_folder_id
+    else:
+        # Format: [yyyy/MM/dd HH:mm]ShortSessionId
+        if session.started_at:
+            local_time = session.started_at.astimezone()
+            date_str = local_time.strftime("%Y/%m/%d %H:%M")
+        else:
+            date_str = str(session.session_date)
+        short_id = str(session.id)[:8]
+        folder_name = f"[{date_str}]{short_id}"
+        folder_id = create_session_folder(folder_name)
+        session.video_folder_id = folder_id
+        db.commit()
+
+    # Filename: Singer_SongName_HHmm.mp4
     song_title = (reg.song.title if reg.song else None) or reg.free_text_song_name or "unknown"
-    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in song_title)[:50]
+    time_tag = reg.actual_start.astimezone().strftime("%H%M") if reg.actual_start else "0000"
     safe_singer = "".join(c if c.isalnum() or c in " _-" else "_" for c in reg.singer_name)[:30]
-    filename = f"{safe_title}_{safe_singer}.mp4"
+    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in song_title)[:50]
+    filename = f"{safe_singer}_{safe_title}_{time_tag}.mp4"
+
+    # Delete previous Drive file if re-uploading
+    if reg.video_url:
+        m = _re.search(r"/file/d/([^/]+)", reg.video_url)
+        if m:
+            delete_drive_file(m.group(1))
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
         content = await file.read()
@@ -1105,7 +1132,7 @@ async def upload_registration_video(reg_id: str, file: UploadFile = File(...), d
         tmp_path = tmp.name
 
     try:
-        video_url = upload_video_to_drive(tmp_path, filename)
+        video_url = upload_video_to_drive(tmp_path, filename, folder_id=folder_id)
         reg.video_url = video_url
         db.commit()
         return {"video_url": video_url}
