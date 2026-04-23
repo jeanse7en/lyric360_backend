@@ -230,4 +230,11 @@ class VideoSegmentResponse(BaseModel):
 class SessionVideoResponse(BaseModel):
     session_id: UUID
     camera_start: Optional[datetime] = None
+    video_folder_id: Optional[str] = None
+    video_folder_name: str
+    parent_folder_id: str
     segments: list[VideoSegmentResponse]
+
+
+class VideoUrlUpdate(BaseModel):
+    video_url: str
