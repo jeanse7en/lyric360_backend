@@ -190,6 +190,7 @@ class UserQueueItem(BaseModel):
     session_date: str
     session_id: UUID
     drinks: List[str] = []
+    video_url: Optional[str] = None
 
     class Config:
         from_attributes = True

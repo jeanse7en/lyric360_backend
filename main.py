@@ -987,6 +987,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             session_date=str(reg.session.session_date),
             session_id=reg.session_id,
             drinks=reg.drinks or [],
+            video_url=reg.video_url,
         ))
     return result
 
