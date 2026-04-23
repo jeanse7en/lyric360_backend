@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 import os
+import shutil
 import tempfile
 
 from fastapi import BackgroundTasks, FastAPI, Depends, File, HTTPException, UploadFile
@@ -1127,8 +1128,7 @@ async def upload_registration_video(reg_id: str, file: UploadFile = File(...), d
             delete_drive_file(m.group(1))
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        content = await file.read()
-        tmp.write(content)
+        shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
 
     try:
