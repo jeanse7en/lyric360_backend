@@ -159,21 +159,34 @@ def delete_session(session_id: UUID, db: Session = Depends(get_db)):
 
 
 # API: Lấy danh sách buổi diễn available (live trước, sau đó planned theo ngày)
-@app.get("/api/sessions/available", response_model=list[schemas.SessionResponse])
+@app.get("/api/sessions/available", response_model=list[schemas.SessionDetailResponse])
 def get_available_sessions(db: Session = Depends(get_db)):
-    return (
+    sessions = (
         db.query(models.LiveSession)
         .filter(
             models.LiveSession.status.in_(["live", "planned"]),
             models.LiveSession.session_date >= date.today(),
         )
         .order_by(
-            # live sessions first, then by date ascending
             (models.LiveSession.status != "live"),
             models.LiveSession.session_date.asc(),
         )
         .all()
     )
+    return [
+        schemas.SessionDetailResponse(
+            id=s.id,
+            name=s.name,
+            session_date=s.session_date,
+            status=s.status,
+            started_at=s.started_at,
+            ended_at=s.ended_at,
+            order_count=db.query(models.QueueRegistration)
+                .filter(models.QueueRegistration.session_id == s.id)
+                .count(),
+        )
+        for s in sessions
+    ]
 
 
 # API: Quản lý bài hát — danh sách kèm số lượng lyric/sheet và số chưa verify
@@ -1142,4 +1155,66 @@ def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db:
                 song_title=song_title,
             )
     return schemas.SessionBookingInfo(booked_song_ids=booked_song_ids, user_registration=user_registration)
+
+
+# ── Cài đặt venue ────────────────────────────────────────────────────────────
+
+DEFAULT_SETTINGS = {
+    "drinks": '[{"id":"bia_tiger","label":"Bia Tiger"},{"id":"bia_heineken","label":"Bia Heineken"},{"id":"bia_333","label":"Bia 333"},{"id":"ruou_vang_do","label":"Rượu vang đỏ"},{"id":"ruou_vang_trang","label":"Rượu vang trắng"},{"id":"coca_cola","label":"Coca Cola"},{"id":"pepsi","label":"Pepsi"},{"id":"nuoc_suoi","label":"Nước suối"},{"id":"tra_da","label":"Trà đá"},{"id":"nuoc_cam","label":"Nước cam"}]',
+    "queue_limit": "30",
+    "song_font_size": "24",
+    "song_one_page": "true",
+}
+
+
+def _get_venue_id(db: Session):
+    from sqlalchemy import text
+    venue_id = db.execute(text("SELECT id FROM venues LIMIT 1")).scalar()
+    if not venue_id:
+        raise HTTPException(status_code=400, detail="Không tìm thấy venue")
+    return venue_id
+
+
+@app.get("/api/settings", response_model=list[schemas.SettingResponse])
+def get_all_settings(db: Session = Depends(get_db)):
+    venue_id = _get_venue_id(db)
+    rows = db.query(models.VenueSetting).filter(models.VenueSetting.venue_id == venue_id).all()
+    saved = {r.key: r.value for r in rows}
+    result = []
+    for key, default_val in DEFAULT_SETTINGS.items():
+        result.append(schemas.SettingResponse(key=key, value=saved.get(key, default_val)))
+    return result
+
+
+@app.get("/api/settings/{key}", response_model=schemas.SettingResponse)
+def get_setting(key: str, db: Session = Depends(get_db)):
+    venue_id = _get_venue_id(db)
+    row = db.query(models.VenueSetting).filter(
+        models.VenueSetting.venue_id == venue_id,
+        models.VenueSetting.key == key,
+    ).first()
+    if row:
+        return schemas.SettingResponse(key=row.key, value=row.value)
+    if key in DEFAULT_SETTINGS:
+        return schemas.SettingResponse(key=key, value=DEFAULT_SETTINGS[key])
+    raise HTTPException(status_code=404, detail="Không tìm thấy cài đặt")
+
+
+@app.put("/api/settings/{key}", response_model=schemas.SettingResponse)
+def upsert_setting(key: str, data: schemas.SettingUpdate, db: Session = Depends(get_db)):
+    if key not in DEFAULT_SETTINGS:
+        raise HTTPException(status_code=400, detail="Khóa cài đặt không hợp lệ")
+    venue_id = _get_venue_id(db)
+    row = db.query(models.VenueSetting).filter(
+        models.VenueSetting.venue_id == venue_id,
+        models.VenueSetting.key == key,
+    ).first()
+    if row:
+        row.value = data.value
+    else:
+        row = models.VenueSetting(venue_id=venue_id, key=key, value=data.value)
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return schemas.SettingResponse(key=row.key, value=row.value)
 

@@ -239,3 +239,17 @@ class SessionVideoResponse(BaseModel):
 
 class VideoUrlUpdate(BaseModel):
     video_url: str
+
+
+# ── Cài đặt venue ────────────────────────────────────────────────────────────
+
+class SettingResponse(BaseModel):
+    key: str
+    value: str
+
+    class Config:
+        from_attributes = True
+
+
+class SettingUpdate(BaseModel):
+    value: str

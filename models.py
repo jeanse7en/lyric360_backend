@@ -77,6 +77,16 @@ class LiveSession(Base):
 
     registrations = relationship("QueueRegistration", back_populates="session", cascade="all, delete-orphan")
 
+class VenueSetting(Base):
+    __tablename__ = "venue_settings"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    venue_id = Column(UUID(as_uuid=True), ForeignKey("venues.id", ondelete="CASCADE"), nullable=False)
+    key = Column(String, nullable=False)
+    value = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class QueueRegistration(Base):
     __tablename__ = "queue_registrations"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
