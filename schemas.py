@@ -220,6 +220,7 @@ class VideoSegmentResponse(BaseModel):
     registration_id: UUID
     song_title: str
     singer_name: str
+    booker_phone: Optional[str] = None
     actual_start_iso: str
     actual_end_iso: str
     video_url: Optional[str] = None

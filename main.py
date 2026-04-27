@@ -1089,6 +1089,7 @@ def get_session_video_segments(session_id: str, db: Session = Depends(get_db)):
             registration_id=reg.id,
             song_title=song_title,
             singer_name=reg.singer_name,
+            booker_phone=reg.booker_phone,
             actual_start_iso=reg.actual_start.isoformat(),
             actual_end_iso=reg.actual_end.isoformat(),
             video_url=reg.video_url,
