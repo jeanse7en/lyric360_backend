@@ -191,6 +191,7 @@ class UserQueueItem(BaseModel):
     session_id: UUID
     drinks: List[str] = []
     video_url: Optional[str] = None
+    order_number: Optional[int] = None
 
     class Config:
         from_attributes = True

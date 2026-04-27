@@ -988,6 +988,10 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             slide_url = None
             lyric_id = None
             lyrics_text = None
+        order_number = db.query(models.QueueRegistration).filter(
+            models.QueueRegistration.session_id == reg.session_id,
+            models.QueueRegistration.created_at <= reg.created_at,
+        ).count()
         result.append(schemas.UserQueueItem(
             registration_id=reg.id,
             song_id=reg.song_id,
@@ -1001,6 +1005,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             session_id=reg.session_id,
             drinks=reg.drinks or [],
             video_url=reg.video_url,
+            order_number=order_number,
         ))
     return result
 
