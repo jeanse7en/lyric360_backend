@@ -90,6 +90,28 @@ class SessionUpdate(BaseModel):
     session_date: Optional[date] = None
 
 
+class SessionQueueSong(BaseModel):
+    id: UUID
+    title: str
+    author: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SessionQueueItem(BaseModel):
+    id: UUID
+    singer_name: str
+    booker_phone: Optional[str] = None
+    status: str
+    created_at: datetime
+    free_text_song_name: Optional[str] = None
+    songs: Optional[SessionQueueSong] = None
+
+    class Config:
+        from_attributes = True
+
+
 class SongCreate(BaseModel):
     title: str
     author: Optional[str] = None

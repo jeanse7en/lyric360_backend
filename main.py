@@ -159,6 +159,33 @@ def delete_session(session_id: UUID, db: Session = Depends(get_db)):
 
 
 # API: Lấy danh sách buổi diễn available (live trước, sau đó planned theo ngày)
+@app.get("/api/sessions/today", response_model=schemas.SessionDetailResponse | None)
+def get_today_session(db: Session = Depends(get_db)):
+    session = (
+        db.query(models.LiveSession)
+        .filter(models.LiveSession.session_date == date.today())
+        .order_by(
+            (models.LiveSession.status != "live"),
+            models.LiveSession.status != "planned",
+        )
+        .first()
+    )
+    if not session:
+        return None
+    return schemas.SessionDetailResponse(
+        id=session.id,
+        name=session.name,
+        session_date=session.session_date,
+        status=session.status,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        order_count=db.query(models.QueueRegistration)
+            .filter(models.QueueRegistration.session_id == session.id)
+            .count(),
+        unverified_song_count=0,
+    )
+
+
 @app.get("/api/sessions/available", response_model=list[schemas.SessionDetailResponse])
 def get_available_sessions(db: Session = Depends(get_db)):
     sessions = (
@@ -1161,6 +1188,35 @@ def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db:
                 song_title=song_title,
             )
     return schemas.SessionBookingInfo(booked_song_ids=booked_song_ids, user_registration=user_registration)
+
+
+@app.get("/api/sessions/{session_id}/queue", response_model=list[schemas.SessionQueueItem])
+def get_session_queue(session_id: str, db: Session = Depends(get_db)):
+    registrations = (
+        db.query(models.QueueRegistration)
+        .filter(models.QueueRegistration.session_id == session_id)
+        .order_by(models.QueueRegistration.created_at)
+        .all()
+    )
+    result = []
+    for reg in registrations:
+        song = None
+        if reg.song:
+            song = schemas.SessionQueueSong(
+                id=reg.song.id,
+                title=reg.song.title,
+                author=reg.song.author,
+            )
+        result.append(schemas.SessionQueueItem(
+            id=reg.id,
+            singer_name=reg.singer_name,
+            booker_phone=reg.booker_phone,
+            status=reg.status,
+            created_at=reg.created_at,
+            free_text_song_name=reg.free_text_song_name,
+            songs=song,
+        ))
+    return result
 
 
 # ── Cài đặt venue ────────────────────────────────────────────────────────────
