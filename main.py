@@ -973,13 +973,14 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
             raise HTTPException(status_code=404, detail="Không tìm thấy bài hát này")
 
         # Kiểm tra bài hát đã được đăng ký trong đêm diễn chưa (bỏ qua bài đã hát xong)
-        duplicate = db.query(models.QueueRegistration).filter(
-            models.QueueRegistration.session_id == queue_data.session_id,
-            models.QueueRegistration.song_id == queue_data.song_id,
-            models.QueueRegistration.status != "done",
-        ).first()
-        if duplicate:
-            raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
+        if not queue_data.allow_duplicate:
+            duplicate = db.query(models.QueueRegistration).filter(
+                models.QueueRegistration.session_id == queue_data.session_id,
+                models.QueueRegistration.song_id == queue_data.song_id,
+                models.QueueRegistration.status != "done",
+            ).first()
+            if duplicate:
+                raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
 
     # 4. Tìm hoặc tạo user
     user_id = queue_data.user_id

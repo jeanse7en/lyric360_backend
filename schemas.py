@@ -207,6 +207,7 @@ class QueueCreate(BaseModel):
     table_position: Optional[str] = None
     drinks: Optional[List[str]] = []
     user_id: Optional[UUID] = None
+    allow_duplicate: bool = False
 
 # Response trả về sau khi đăng ký thành công
 class QueueResponse(BaseModel):
