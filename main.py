@@ -72,6 +72,7 @@ def get_all_sessions(
             name=s.name,
             session_date=s.session_date,
             status=s.status,
+            is_private=s.is_private,
             started_at=s.started_at,
             ended_at=s.ended_at,
             order_count=len(s.registrations),
@@ -93,6 +94,7 @@ def create_session(data: schemas.SessionCreate, db: Session = Depends(get_db)):
         name=data.name,
         session_date=data.session_date,
         status="planned",
+        is_private=data.is_private,
     )
     db.add(session)
     db.commit()
@@ -143,6 +145,8 @@ def update_session(session_id: UUID, data: schemas.SessionUpdate, db: Session = 
         session.name = data.name or None
     if data.session_date is not None:
         session.session_date = data.session_date
+    if data.is_private is not None:
+        session.is_private = data.is_private
     db.commit()
     db.refresh(session)
     return session
@@ -193,6 +197,7 @@ def get_available_sessions(db: Session = Depends(get_db)):
         .filter(
             models.LiveSession.status.in_(["live", "planned"]),
             models.LiveSession.session_date >= date.today(),
+            models.LiveSession.is_private == False,
         )
         .order_by(
             (models.LiveSession.status != "live"),
@@ -206,6 +211,7 @@ def get_available_sessions(db: Session = Depends(get_db)):
             name=s.name,
             session_date=s.session_date,
             status=s.status,
+            is_private=s.is_private,
             started_at=s.started_at,
             ended_at=s.ended_at,
             order_count=db.query(models.QueueRegistration)
@@ -214,6 +220,25 @@ def get_available_sessions(db: Session = Depends(get_db)):
         )
         for s in sessions
     ]
+
+
+# API: Lấy một buổi diễn theo ID — phải khai báo sau /today và /available
+@app.get("/api/sessions/{session_id}", response_model=schemas.SessionDetailResponse)
+def get_session(session_id: UUID, db: Session = Depends(get_db)):
+    session = db.query(models.LiveSession).filter(models.LiveSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy buổi diễn")
+    order_count = db.query(models.QueueRegistration).filter(models.QueueRegistration.session_id == session_id).count()
+    return schemas.SessionDetailResponse(
+        id=session.id,
+        name=session.name,
+        session_date=session.session_date,
+        status=session.status,
+        is_private=session.is_private,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        order_count=order_count,
+    )
 
 
 # API: Quản lý bài hát — danh sách kèm số lượng lyric/sheet và số chưa verify
@@ -801,6 +826,19 @@ def delete_sheet(song_id: UUID, sheet_id: UUID, db: Session = Depends(get_db)):
 
 # API 1: Hỗ trợ Paging và Load mặc định
 
+# Danh sách tất cả users (admin) — phải khai báo trước /{user_id}
+@app.get("/api/users", response_model=list[schemas.UserListItem])
+def list_users(q: str = "", offset: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    query = db.query(models.User)
+    if q.strip():
+        q_like = f"%{q.strip()}%"
+        query = query.filter(
+            models.User.name.ilike(q_like) |
+            models.User.phone_zalo.ilike(q_like)
+        )
+    return query.order_by(models.User.name).offset(offset).limit(limit).all()
+
+
 # Tìm kiếm người dùng theo tên — phải khai báo trước /{user_id}
 @app.get("/api/users/search", response_model=list[schemas.UserResponse])
 def search_users(q: str = "", db: Session = Depends(get_db)):
@@ -826,6 +864,31 @@ def get_user(user_id: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
     return user
+
+
+@app.patch("/api/users/{user_id}", response_model=schemas.UserListItem)
+def update_user(user_id: str, data: schemas.UserUpdate, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+    if data.name is not None:
+        user.name = data.name
+    if data.phone_zalo is not None:
+        user.phone_zalo = data.phone_zalo or None
+    if data.facebook_link is not None:
+        user.facebook_link = data.facebook_link or None
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.delete("/api/users/{user_id}", status_code=204)
+def delete_user(user_id: str, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+    db.delete(user)
+    db.commit()
 
 
 def _ingest_free_text_song(registration_id: UUID, title: str):

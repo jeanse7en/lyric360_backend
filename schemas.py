@@ -65,6 +65,7 @@ class SessionResponse(BaseModel):
     name: Optional[str] = None
     session_date: date
     status: str
+    is_private: bool = False
     started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
 
@@ -75,6 +76,7 @@ class SessionResponse(BaseModel):
 class SessionDetailResponse(SessionResponse):
     order_count: int = 0
     unverified_song_count: int = 0
+    is_private: bool = False
 
     class Config:
         from_attributes = True
@@ -83,11 +85,13 @@ class SessionDetailResponse(SessionResponse):
 class SessionCreate(BaseModel):
     name: Optional[str] = None
     session_date: date
+    is_private: bool = False
 
 
 class SessionUpdate(BaseModel):
     name: Optional[str] = None
     session_date: Optional[date] = None
+    is_private: Optional[bool] = None
 
 
 class SessionQueueSong(BaseModel):
@@ -174,6 +178,23 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserListItem(BaseModel):
+    id: UUID
+    name: str
+    phone_zalo: Optional[str] = None
+    facebook_link: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    phone_zalo: Optional[str] = None
+    facebook_link: Optional[str] = None
 
 
 # Request khi khách gửi form đăng ký

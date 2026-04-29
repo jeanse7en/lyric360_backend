@@ -20,6 +20,7 @@ class User(Base):
     phone_zalo = Column(String)
     name = Column(String, nullable=False)
     role = Column(String, default="customer")
+    facebook_link = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Song(Base):
@@ -73,6 +74,7 @@ class LiveSession(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     ended_at = Column(DateTime(timezone=True), nullable=True)
     video_folder_id = Column(String, nullable=True)
+    is_private = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     registrations = relationship("QueueRegistration", back_populates="session", cascade="all, delete-orphan")
