@@ -1290,6 +1290,7 @@ DEFAULT_SETTINGS = {
     "queue_limit": "30",
     "song_font_size": "24",
     "song_one_page": "true",
+    "copy_fb_template": "🎵 Bài hát: [Bài hát]\n✍️ Tác giả: [Tác giả]\n🎤 Khách hát: [Người hát]",
 }
 
 
