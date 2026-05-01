@@ -67,6 +67,7 @@ def get_all_sessions(
                 )
             ).distinct().count()
         ) if s.registrations else 0
+        free_text_song_count = sum(1 for r in s.registrations if r.free_text_song_name)
         result.append(schemas.SessionDetailResponse(
             id=s.id,
             name=s.name,
@@ -77,6 +78,7 @@ def get_all_sessions(
             ended_at=s.ended_at,
             order_count=len(s.registrations),
             unverified_song_count=song_ids_with_unverified,
+            free_text_song_count=free_text_song_count,
         ))
     return result
 

@@ -76,6 +76,7 @@ class SessionResponse(BaseModel):
 class SessionDetailResponse(SessionResponse):
     order_count: int = 0
     unverified_song_count: int = 0
+    free_text_song_count: int = 0
     is_private: bool = False
 
     class Config:
