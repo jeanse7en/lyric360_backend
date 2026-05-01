@@ -735,15 +735,23 @@ def sync_run(
 # API: Tìm kiếm bài hát (phải đặt trước /{song_id} để tránh FastAPI bắt "search" như UUID)
 @app.get("/api/songs/search", response_model=list[schemas.SongResponse])
 def search_songs(q: str | None = None, offset: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+    from sqlalchemy import case as sa_case
     query = db.query(models.Song)
     if q and len(q.strip()) > 0:
-        query = query.filter(
-            models.Song.title_normalized.ilike(f"%{normalize_vn(q.strip())}%")
+        q_norm = normalize_vn(q.strip())
+        query = query.filter(models.Song.title_normalized.ilike(f"%{q_norm}%"))
+        rank = sa_case(
+            (models.Song.title_normalized == q_norm, 0),
+            (models.Song.title_normalized.ilike(f"{q_norm}%"), 1),
+            else_=2,
         )
+        order = rank
+    else:
+        order = models.Song.title_normalized.asc()
     songs = (
         query
         .options(selectinload(models.Song.sheets), selectinload(models.Song.lyrics))
-        .order_by(models.Song.title)
+        .order_by(order, models.Song.title_normalized.asc())
         .offset(offset)
         .limit(limit)
         .all()
