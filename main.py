@@ -964,11 +964,39 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
     if session_exists.status == "ended":
         raise HTTPException(status_code=400, detail="Đêm diễn đã kết thúc")
 
-    # 2. Validate: phải có song_id hoặc free_text_song_name
+    # 2. Quota checks (skipped for private sessions)
+    if not session_exists.is_private:
+        # 2a. Total queue limit for the session
+        queue_limit = int(_get_setting_value("queue_limit", db))
+        current_count = db.query(models.QueueRegistration).filter(
+            models.QueueRegistration.session_id == queue_data.session_id,
+        ).count()
+        if current_count >= queue_limit:
+            raise HTTPException(status_code=400, detail=f"Đêm diễn đã đủ {queue_limit} lượt đăng ký")
+
+        # 2b. Per-user daily quota (by user_id if provided, else by singer_name+phone)
+        user_quota = int(_get_setting_value("user_quota", db))
+        session_date = session_exists.session_date
+        user_reg_query = db.query(models.QueueRegistration).join(
+            models.LiveSession,
+            models.QueueRegistration.session_id == models.LiveSession.id,
+        ).filter(
+            models.LiveSession.session_date == session_date,
+        )
+        if queue_data.user_id:
+            user_reg_query = user_reg_query.filter(models.QueueRegistration.user_id == queue_data.user_id)
+        elif queue_data.booker_phone:
+            user_reg_query = user_reg_query.filter(models.QueueRegistration.booker_phone == queue_data.booker_phone)
+        else:
+            user_reg_query = user_reg_query.filter(models.QueueRegistration.singer_name == queue_data.singer_name)
+        if user_reg_query.count() >= user_quota:
+            raise HTTPException(status_code=400, detail=f"Mỗi khách chỉ được đăng ký tối đa {user_quota} bài trong ngày")
+
+    # 3. Validate: phải có song_id hoặc free_text_song_name
     if not queue_data.song_id and not queue_data.free_text_song_name:
         raise HTTPException(status_code=400, detail="Vui lòng chọn hoặc nhập tên bài hát")
 
-    # 3. Kiểm tra bài hát có trong kho không (chỉ khi có song_id)
+    # 4. Kiểm tra bài hát có trong kho không (chỉ khi có song_id)
     if queue_data.song_id:
         song_exists = db.query(models.Song).filter(models.Song.id == queue_data.song_id).first()
         if not song_exists:
@@ -984,7 +1012,7 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
             if duplicate:
                 raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
 
-    # 4. Tìm hoặc tạo user
+    # 5. Tìm hoặc tạo user
     user_id = queue_data.user_id
     if user_id:
         user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -1013,7 +1041,7 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
             db.flush()
         user_id = user.id
 
-    # 5. Tạo record
+    # 6. Tạo record
     new_registration = models.QueueRegistration(
         session_id=queue_data.session_id,
         song_id=queue_data.song_id,
@@ -1290,6 +1318,7 @@ def get_session_queue(session_id: str, db: Session = Depends(get_db)):
 DEFAULT_SETTINGS = {
     "drinks": '[{"id":"bia_tiger","label":"Bia Tiger"},{"id":"bia_heineken","label":"Bia Heineken"},{"id":"bia_333","label":"Bia 333"},{"id":"ruou_vang_do","label":"Rượu vang đỏ"},{"id":"ruou_vang_trang","label":"Rượu vang trắng"},{"id":"coca_cola","label":"Coca Cola"},{"id":"pepsi","label":"Pepsi"},{"id":"nuoc_suoi","label":"Nước suối"},{"id":"tra_da","label":"Trà đá"},{"id":"nuoc_cam","label":"Nước cam"}]',
     "queue_limit": "30",
+    "user_quota": "1",
     "song_font_size": "24",
     "song_one_page": "true",
     "copy_fb_template": "🎵 Bài hát: [Bài hát]\n✍️ Tác giả: [Tác giả]\n🎤 Khách hát: [Người hát]",
@@ -1302,6 +1331,15 @@ def _get_venue_id(db: Session):
     if not venue_id:
         raise HTTPException(status_code=400, detail="Không tìm thấy venue")
     return venue_id
+
+
+def _get_setting_value(key: str, db: Session) -> str:
+    venue_id = _get_venue_id(db)
+    row = db.query(models.VenueSetting).filter(
+        models.VenueSetting.venue_id == venue_id,
+        models.VenueSetting.key == key,
+    ).first()
+    return row.value if row else DEFAULT_SETTINGS.get(key, "")
 
 
 @app.get("/api/settings", response_model=list[schemas.SettingResponse])
