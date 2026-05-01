@@ -1,0 +1,1 @@
+ALTER TABLE queue_registrations ADD COLUMN IF NOT EXISTS want_facebook_post BOOLEAN NOT NULL DEFAULT FALSE;

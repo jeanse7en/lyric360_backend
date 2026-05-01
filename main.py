@@ -1134,6 +1134,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             session_id=reg.session_id,
             drinks=reg.drinks or [],
             video_url=reg.video_url,
+            want_facebook_post=reg.want_facebook_post,
             order_number=order_number,
         ))
     return result
@@ -1267,6 +1268,60 @@ def update_registration_video_url(reg_id: str, body: schemas.VideoUrlUpdate, db:
     return {"video_url": reg.video_url}
 
 
+@app.post("/api/sessions/{session_id}/link-photos-videos")
+def link_photos_videos(session_id: str, db: Session = Depends(get_db)):
+    """Scan Google Photos for the session date, match videos to finished songs by timestamp."""
+    from utils.photos import list_videos_on_date, find_video_for_song
+
+    session = db.query(models.LiveSession).filter(models.LiveSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy buổi diễn")
+
+    session_date_str = str(session.session_date)
+    try:
+        videos = list_videos_on_date(session_date_str)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Lỗi Google Photos: {e}")
+
+    if not videos:
+        return {"linked": 0, "skipped": 0, "message": "Không tìm thấy video nào trong ngày này trên Google Photos"}
+
+    regs = (
+        db.query(models.QueueRegistration)
+        .filter(
+            models.QueueRegistration.session_id == session_id,
+            models.QueueRegistration.actual_start.isnot(None),
+            models.QueueRegistration.actual_end.isnot(None),
+            models.QueueRegistration.video_url.is_(None),
+        )
+        .all()
+    )
+
+    linked = 0
+    skipped = 0
+    for reg in regs:
+        url = find_video_for_song(videos, reg.actual_start, reg.actual_end)
+        if url:
+            reg.video_url = url
+            linked += 1
+        else:
+            skipped += 1
+
+    db.commit()
+    return {"linked": linked, "skipped": skipped, "total_videos": len(videos)}
+
+
+@app.post("/api/queue/registrations/{reg_id}/facebook-post")
+def request_facebook_post(reg_id: str, db: Session = Depends(get_db)):
+    """Mark a registration as wanting a Facebook post."""
+    reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == reg_id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
+    reg.want_facebook_post = True
+    db.commit()
+    return {"want_facebook_post": True}
+
+
 # Lấy thông tin đặt chỗ trong một session: danh sách song_id đã đặt + đăng ký của user (nếu có)
 @app.get("/api/sessions/{session_id}/booked-songs", response_model=schemas.SessionBookingInfo)
 def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db: Session = Depends(get_db)):
@@ -1350,6 +1405,8 @@ def _get_setting_value(key: str, db: Session) -> str:
     return row.value if row else DEFAULT_SETTINGS.get(key, "")
 
 
+
+
 @app.get("/api/settings", response_model=list[schemas.SettingResponse])
 def get_all_settings(db: Session = Depends(get_db)):
     venue_id = _get_venue_id(db)
@@ -1392,4 +1449,6 @@ def upsert_setting(key: str, data: schemas.SettingUpdate, db: Session = Depends(
     db.commit()
     db.refresh(row)
     return schemas.SettingResponse(key=row.key, value=row.value)
+
+
 

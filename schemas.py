@@ -236,6 +236,7 @@ class UserQueueItem(BaseModel):
     session_id: UUID
     drinks: List[str] = []
     video_url: Optional[str] = None
+    want_facebook_post: bool = False
     order_number: Optional[int] = None
 
     class Config:

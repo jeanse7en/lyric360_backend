@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 SCOPES = [
     "https://www.googleapis.com/auth/presentations",
     "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/photoslibrary.readonly",
 ]
 OAUTH_TOKEN_FILE = os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "oauth_token.json")
 OUTPUT_FOLDER_ID = os.getenv("SLIDES_OUTPUT_FOLDER_ID", "")
