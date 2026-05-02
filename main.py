@@ -99,6 +99,31 @@ def create_session(data: schemas.SessionCreate, db: Session = Depends(get_db)):
         is_private=data.is_private,
     )
     db.add(session)
+    db.flush()
+
+    # Auto-create registrations from preorder_list setting
+    import json as _json
+    try:
+        raw = _get_setting_value("preorder_list", db)
+        preorder_list = _json.loads(raw) if raw else []
+    except Exception:
+        preorder_list = []
+    for entry in preorder_list:
+        user_id = entry.get("user_id")
+        song_id = entry.get("song_id")
+        preorder_number = entry.get("preorder_number")
+        singer_name = entry.get("user_name", "")
+        if not user_id or not song_id or not preorder_number:
+            continue
+        db.add(models.QueueRegistration(
+            session_id=session.id,
+            song_id=song_id,
+            user_id=user_id,
+            singer_name=singer_name,
+            status="waiting",
+            preorder_number=preorder_number,
+        ))
+
     db.commit()
     db.refresh(session)
     return session
@@ -1422,6 +1447,7 @@ DEFAULT_SETTINGS = {
     "song_font_size": "24",
     "song_one_page": "true",
     "copy_fb_template": "🎵 Bài hát: [Bài hát]\n✍️ Tác giả: [Tác giả]\n🎤 Khách hát: [Người hát]",
+    "preorder_list": "[]",
 }
 
 
