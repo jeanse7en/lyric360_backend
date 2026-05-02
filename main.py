@@ -1345,8 +1345,7 @@ def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db:
     registrations = (
         db.query(models.QueueRegistration)
         .filter(
-            models.QueueRegistration.session_id == session_id,
-            models.QueueRegistration.status != "done",
+            models.QueueRegistration.session_id == session_id
         )
         .all()
     )
