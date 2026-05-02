@@ -104,10 +104,20 @@ class SessionUpdate(BaseModel):
     is_private: Optional[bool] = None
 
 
+class SessionQueueVerifiable(BaseModel):
+    id: UUID
+    verified_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class SessionQueueSong(BaseModel):
     id: UUID
     title: str
     author: Optional[str] = None
+    song_lyrics: List["SessionQueueVerifiable"] = []
+    song_sheets: List["SessionQueueVerifiable"] = []
 
     class Config:
         from_attributes = True
@@ -115,13 +125,20 @@ class SessionQueueSong(BaseModel):
 
 class SessionQueueItem(BaseModel):
     id: UUID
+    session_id: UUID
     singer_name: str
     booker_phone: Optional[str] = None
+    table_position: Optional[str] = None
+    drinks: List[str] = []
     status: str
     created_at: datetime
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
     free_text_song_name: Optional[str] = None
-    songs: Optional[SessionQueueSong] = None
     preorder_number: Optional[int] = None
+    video_url: Optional[str] = None
+    want_facebook_post: bool = False
+    songs: Optional[SessionQueueSong] = None
 
     class Config:
         from_attributes = True

@@ -1385,20 +1385,31 @@ def get_session_queue(session_id: str, db: Session = Depends(get_db)):
     for reg in registrations:
         song = None
         if reg.song:
+            lyrics = [schemas.SessionQueueVerifiable(id=l.id, verified_at=l.verified_at) for l in reg.song.lyrics]
+            sheets = [schemas.SessionQueueVerifiable(id=s.id, verified_at=s.verified_at) for s in reg.song.sheets]
             song = schemas.SessionQueueSong(
                 id=reg.song.id,
                 title=reg.song.title,
                 author=reg.song.author,
+                song_lyrics=lyrics,
+                song_sheets=sheets,
             )
         result.append(schemas.SessionQueueItem(
             id=reg.id,
+            session_id=reg.session_id,
             singer_name=reg.singer_name,
             booker_phone=reg.booker_phone,
+            table_position=reg.table_position,
+            drinks=reg.drinks or [],
             status=reg.status,
             created_at=reg.created_at,
+            actual_start=reg.actual_start,
+            actual_end=reg.actual_end,
             free_text_song_name=reg.free_text_song_name,
-            songs=song,
             preorder_number=reg.preorder_number,
+            video_url=reg.video_url,
+            want_facebook_post=reg.want_facebook_post,
+            songs=song,
         ))
     return result
 
