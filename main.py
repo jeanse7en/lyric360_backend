@@ -194,7 +194,10 @@ def delete_session(session_id: UUID, db: Session = Depends(get_db)):
 def get_today_session(db: Session = Depends(get_db)):
     session = (
         db.query(models.LiveSession)
-        .filter(models.LiveSession.session_date == date.today())
+        .filter(
+            models.LiveSession.session_date == date.today(),
+            models.LiveSession.is_private == False,
+        )
         .order_by(
             (models.LiveSession.status != "live"),
             models.LiveSession.status != "planned",
