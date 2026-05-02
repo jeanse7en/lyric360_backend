@@ -1000,11 +1000,24 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         if user_reg_query.count() >= user_quota:
             raise HTTPException(status_code=400, detail=f"Mỗi khách chỉ được đăng ký tối đa {user_quota} bài trong ngày")
 
-    # 3. Validate: phải có song_id hoặc free_text_song_name
+    # 3. Validate preorder_number
+    if queue_data.preorder_number is not None:
+        queue_limit_val = int(_get_setting_value("queue_limit", db))
+        if not (1 <= queue_data.preorder_number <= queue_limit_val):
+            raise HTTPException(status_code=400, detail=f"Số thứ tự phải từ 1 đến {queue_limit_val}")
+        slot_taken = db.query(models.QueueRegistration).filter(
+            models.QueueRegistration.session_id == queue_data.session_id,
+            models.QueueRegistration.preorder_number == queue_data.preorder_number,
+            models.QueueRegistration.status != "done",
+        ).first()
+        if slot_taken:
+            raise HTTPException(status_code=409, detail=f"Số thứ tự {queue_data.preorder_number} đã được đăng ký")
+
+    # 4. Validate: phải có song_id hoặc free_text_song_name
     if not queue_data.song_id and not queue_data.free_text_song_name:
         raise HTTPException(status_code=400, detail="Vui lòng chọn hoặc nhập tên bài hát")
 
-    # 4. Kiểm tra bài hát có trong kho không (chỉ khi có song_id)
+    # 5. Kiểm tra bài hát có trong kho không (chỉ khi có song_id)
     if queue_data.song_id:
         song_exists = db.query(models.Song).filter(models.Song.id == queue_data.song_id).first()
         if not song_exists:
@@ -1020,7 +1033,7 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
             if duplicate:
                 raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
 
-    # 5. Tìm hoặc tạo user
+    # 6. Tìm hoặc tạo user
     user_id = queue_data.user_id
     if user_id:
         user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -1049,7 +1062,7 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
             db.flush()
         user_id = user.id
 
-    # 6. Tạo record
+    # 7. Tạo record
     new_registration = models.QueueRegistration(
         session_id=queue_data.session_id,
         song_id=queue_data.song_id,
@@ -1059,7 +1072,8 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         booker_phone=queue_data.booker_phone,
         table_position=queue_data.table_position,
         drinks=queue_data.drinks or [],
-        status="waiting"
+        status="waiting",
+        preorder_number=queue_data.preorder_number,
     )
 
     db.add(new_registration)
@@ -1334,6 +1348,7 @@ def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db:
         .all()
     )
     booked_song_ids = [reg.song_id for reg in registrations if reg.song_id is not None]
+    taken_preorder_numbers = [reg.preorder_number for reg in registrations if reg.preorder_number is not None]
     user_registration = None
     if user_id:
         user_reg = next((r for r in registrations if str(r.user_id) == user_id), None)
@@ -1344,15 +1359,23 @@ def get_session_booked_songs(session_id: str, user_id: Optional[str] = None, db:
                 song_id=user_reg.song_id,
                 song_title=song_title,
             )
-    return schemas.SessionBookingInfo(booked_song_ids=booked_song_ids, user_registration=user_registration)
+    return schemas.SessionBookingInfo(
+        booked_song_ids=booked_song_ids,
+        user_registration=user_registration,
+        taken_preorder_numbers=taken_preorder_numbers,
+    )
 
 
 @app.get("/api/sessions/{session_id}/queue", response_model=list[schemas.SessionQueueItem])
 def get_session_queue(session_id: str, db: Session = Depends(get_db)):
+    from sqlalchemy import case, nullslast
     registrations = (
         db.query(models.QueueRegistration)
         .filter(models.QueueRegistration.session_id == session_id)
-        .order_by(models.QueueRegistration.created_at)
+        .order_by(
+            nullslast(models.QueueRegistration.preorder_number.asc()),
+            models.QueueRegistration.created_at.asc(),
+        )
         .all()
     )
     result = []
@@ -1372,6 +1395,7 @@ def get_session_queue(session_id: str, db: Session = Depends(get_db)):
             created_at=reg.created_at,
             free_text_song_name=reg.free_text_song_name,
             songs=song,
+            preorder_number=reg.preorder_number,
         ))
     return result
 

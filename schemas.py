@@ -112,6 +112,7 @@ class SessionQueueItem(BaseModel):
     created_at: datetime
     free_text_song_name: Optional[str] = None
     songs: Optional[SessionQueueSong] = None
+    preorder_number: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -209,6 +210,7 @@ class QueueCreate(BaseModel):
     drinks: Optional[List[str]] = []
     user_id: Optional[UUID] = None
     allow_duplicate: bool = False
+    preorder_number: Optional[int] = None
 
 # Response trả về sau khi đăng ký thành công
 class QueueResponse(BaseModel):
@@ -259,6 +261,7 @@ class UserExistingRegistration(BaseModel):
 class SessionBookingInfo(BaseModel):
     booked_song_ids: list[UUID]
     user_registration: Optional[UserExistingRegistration] = None
+    taken_preorder_numbers: list[int] = []
 
 
 # ── Video cutting ────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, Text, Date, DateTime, ForeignKey
+from sqlalchemy import Column, String, Boolean, Text, Date, DateTime, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -105,6 +105,7 @@ class QueueRegistration(Base):
     actual_end = Column(DateTime(timezone=True))
     video_url = Column(String)
     want_facebook_post = Column(Boolean, default=False, nullable=False)
+    preorder_number = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("LiveSession", back_populates="registrations")
