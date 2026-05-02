@@ -3,6 +3,15 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, date
 
+class LyricSummary(BaseModel):
+    id: UUID
+    source_lyric: str
+    composed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 # Child responses
 class SongSheetResponse(BaseModel):
     id: UUID
@@ -233,6 +242,7 @@ class UserQueueItem(BaseModel):
     slide_drive_url: Optional[str] = None
     lyric_id: Optional[UUID] = None
     lyrics_text: Optional[str] = None
+    lyrics: List[LyricSummary] = []
     status: str
     session_date: str
     session_id: UUID

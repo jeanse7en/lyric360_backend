@@ -1124,6 +1124,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             slide_url = lyric_with_slide.slide_drive_url if lyric_with_slide else None
             lyric_id = lyric_with_text.id if lyric_with_text else None
             lyrics_text = lyric_with_text.lyrics if lyric_with_text else None
+            all_lyrics = [schemas.LyricSummary(id=l.id, source_lyric=l.source_lyric, composed_at=l.composed_at) for l in active_lyrics]
         else:
             # free-text song not yet ingested by background task
             title = reg.free_text_song_name or ""
@@ -1131,6 +1132,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             slide_url = None
             lyric_id = None
             lyrics_text = None
+            all_lyrics = []
         order_number = db.query(models.QueueRegistration).filter(
             models.QueueRegistration.session_id == reg.session_id,
             models.QueueRegistration.created_at <= reg.created_at,
@@ -1143,6 +1145,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             slide_drive_url=slide_url,
             lyric_id=lyric_id,
             lyrics_text=lyrics_text,
+            lyrics=all_lyrics,
             status=reg.status,
             session_date=str(reg.session.session_date),
             session_id=reg.session_id,
