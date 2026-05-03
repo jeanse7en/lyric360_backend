@@ -2,11 +2,11 @@
 Google Photos Library API helper.
 
 Uses the same oauth_token.json as slides.py — no separate auth needed.
-The token must include photoslibrary.readonly scope (already added to slides.py SCOPES).
+The token must include photoslibrary.readonly scope (already added to reauth.py SCOPES).
 
 One-time setup:
   1. Delete oauth_token.json
-  2. Re-authorize via GET /api/auth/init  (same as slides setup)
+  2. Re-authorize via: python reauth.py  (sign in as sacmau1971@gmail.com)
   3. Done — works forever, auto-refreshes silently.
 
 Matching logic:
@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 SCOPES = [
     "https://www.googleapis.com/auth/presentations",
     "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/photoslibrary.readonly",
+    "https://www.googleapis.com/auth/photoslibrary",
+    "https://www.googleapis.com/auth/photoslibrary.sharing",
 ]
 PHOTOS_API = "https://photoslibrary.googleapis.com/v1"
 OAUTH_TOKEN_FILE = os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "oauth_token.json")

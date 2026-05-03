@@ -126,6 +126,7 @@ class SessionQueueSong(BaseModel):
 class SessionQueueItem(BaseModel):
     id: UUID
     session_id: UUID
+    user_id: Optional[UUID] = None
     singer_name: str
     booker_phone: Optional[str] = None
     table_position: Optional[str] = None
@@ -277,6 +278,11 @@ class QueueUpdate(BaseModel):
     song_id: Optional[UUID] = None
     free_text_song_name: Optional[str] = None
     drinks: Optional[List[str]] = None
+    # admin-only fields
+    user_id: Optional[UUID] = None
+    singer_name: Optional[str] = None
+    booker_phone: Optional[str] = None
+    preorder_number: Optional[int] = None
 
 
 class UserExistingRegistration(BaseModel):

@@ -1028,9 +1028,12 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         if user_reg_query.count() >= user_quota:
             raise HTTPException(status_code=400, detail=f"Mỗi khách chỉ được đăng ký tối đa {user_quota} bài trong ngày")
 
-    # 3. Validate preorder_number
+    # 3. Validate / auto-assign preorder_number
+    queue_limit_val = int(_get_setting_value("queue_limit", db))
+    # Acquire a per-session advisory lock so concurrent auto-assign requests are serialised
+    session_lock_key = int(UUID(str(queue_data.session_id)).int % (2**63))
+    db.execute(select(func.pg_advisory_xact_lock(session_lock_key)))
     if queue_data.preorder_number is not None:
-        queue_limit_val = int(_get_setting_value("queue_limit", db))
         if not (1 <= queue_data.preorder_number <= queue_limit_val):
             raise HTTPException(status_code=400, detail=f"Số thứ tự phải từ 1 đến {queue_limit_val}")
         slot_taken = db.query(models.QueueRegistration).filter(
@@ -1040,6 +1043,20 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         ).first()
         if slot_taken:
             raise HTTPException(status_code=409, detail=f"Số thứ tự {queue_data.preorder_number} đã được đăng ký")
+    else:
+        # Auto-assign: find first available slot
+        taken = {
+            row.preorder_number
+            for row in db.query(models.QueueRegistration.preorder_number).filter(
+                models.QueueRegistration.session_id == queue_data.session_id,
+                models.QueueRegistration.preorder_number.isnot(None),
+                models.QueueRegistration.status != "done",
+            ).all()
+        }
+        auto_slot = next((n for n in range(1, queue_limit_val + 1) if n not in taken), None)
+        if auto_slot is None:
+            raise HTTPException(status_code=400, detail="Không còn số thứ tự trống")
+        queue_data = queue_data.model_copy(update={"preorder_number": auto_slot})
 
     # 4. Validate: phải có song_id hoặc free_text_song_name
     if not queue_data.song_id and not queue_data.free_text_song_name:
@@ -1219,6 +1236,27 @@ def update_queue_registration(reg_id: str, update: schemas.QueueUpdate, db: Sess
 
     if update.drinks is not None:
         reg.drinks = update.drinks
+
+    if "user_id" in update.model_fields_set:
+        reg.user_id = update.user_id
+
+    if update.singer_name is not None:
+        reg.singer_name = update.singer_name
+
+    if update.booker_phone is not None:
+        reg.booker_phone = update.booker_phone
+
+    if "preorder_number" in update.model_fields_set:
+        if update.preorder_number is not None:
+            conflict = db.query(models.QueueRegistration).filter(
+                models.QueueRegistration.session_id == reg.session_id,
+                models.QueueRegistration.preorder_number == update.preorder_number,
+                models.QueueRegistration.id != reg.id,
+                models.QueueRegistration.status != "done",
+            ).first()
+            if conflict:
+                raise HTTPException(status_code=409, detail=f"Số thứ tự {update.preorder_number} đã được đăng ký")
+        reg.preorder_number = update.preorder_number
 
     db.commit()
     return {"ok": True}
@@ -1402,6 +1440,10 @@ def get_session_queue(session_id: str, db: Session = Depends(get_db)):
     registrations = (
         db.query(models.QueueRegistration)
         .filter(models.QueueRegistration.session_id == session_id)
+        .options(
+            selectinload(models.QueueRegistration.song).selectinload(models.Song.lyrics),
+            selectinload(models.QueueRegistration.song).selectinload(models.Song.sheets),
+        )
         .order_by(
             nullslast(models.QueueRegistration.preorder_number.asc()),
             models.QueueRegistration.created_at.asc(),
@@ -1424,6 +1466,7 @@ def get_session_queue(session_id: str, db: Session = Depends(get_db)):
         result.append(schemas.SessionQueueItem(
             id=reg.id,
             session_id=reg.session_id,
+            user_id=reg.user_id,
             singer_name=reg.singer_name,
             booker_phone=reg.booker_phone,
             table_position=reg.table_position,
