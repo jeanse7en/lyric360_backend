@@ -75,6 +75,7 @@ class SessionResponse(BaseModel):
     session_date: date
     status: str
     is_private: bool = False
+    album_url: Optional[str] = None
     started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
 
@@ -102,6 +103,7 @@ class SessionUpdate(BaseModel):
     name: Optional[str] = None
     session_date: Optional[date] = None
     is_private: Optional[bool] = None
+    album_url: Optional[str] = None
 
 
 class SessionQueueVerifiable(BaseModel):
@@ -268,6 +270,7 @@ class UserQueueItem(BaseModel):
     video_url: Optional[str] = None
     want_facebook_post: bool = False
     order_number: Optional[int] = None
+    album_url: Optional[str] = None
 
     class Config:
         from_attributes = True

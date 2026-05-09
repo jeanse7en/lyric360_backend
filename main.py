@@ -18,6 +18,14 @@ import models
 import schemas
 from database import get_db
 from utils.text import normalize_vn
+from utils.settings import DEFAULT_SETTINGS, get_venue_id as _get_venue_id, get_setting_value as _get_setting_value
+from utils.queue_service import (
+    assign_preorder_number,
+    check_session_limits,
+    check_song,
+    create_registration,
+    find_or_create_user,
+)
 
 app = FastAPI(title="Lyric360 API Backend")
 
@@ -86,11 +94,7 @@ def get_all_sessions(
 # API: Tạo buổi diễn mới
 @app.post("/api/sessions", response_model=schemas.SessionResponse)
 def create_session(data: schemas.SessionCreate, db: Session = Depends(get_db)):
-    # Dùng venue_id tạm — sau này lấy từ auth token
-    from sqlalchemy import text
-    venue_id = db.execute(text("SELECT id FROM venues LIMIT 1")).scalar()
-    if not venue_id:
-        raise HTTPException(status_code=400, detail="Không tìm thấy venue")
+    venue_id = _get_venue_id(db)
     session = models.LiveSession(
         venue_id=venue_id,
         name=data.name,
@@ -174,6 +178,8 @@ def update_session(session_id: UUID, data: schemas.SessionUpdate, db: Session = 
         session.session_date = data.session_date
     if data.is_private is not None:
         session.is_private = data.is_private
+    if data.album_url is not None:
+        session.album_url = data.album_url or None
     db.commit()
     db.refresh(session)
     return session
@@ -993,145 +999,25 @@ def _ingest_free_text_song(registration_id: UUID, title: str):
 # API 2: Đăng ký bài hát mới vào hàng đợi
 @app.post("/api/queue/register", response_model=schemas.QueueResponse)
 def register_queue(queue_data: schemas.QueueCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    # 1. Kiểm tra session_id (Đêm diễn) có tồn tại và đang live không
     session_exists = db.query(models.LiveSession).filter(models.LiveSession.id == queue_data.session_id).first()
     if not session_exists:
         raise HTTPException(status_code=404, detail="Không tìm thấy đêm diễn này")
     if session_exists.status == "ended":
         raise HTTPException(status_code=400, detail="Đêm diễn đã kết thúc")
 
-    # 2. Quota checks (skipped for private sessions)
-    if not session_exists.is_private:
-        # 2a. Total queue limit for the session
-        queue_limit = int(_get_setting_value("queue_limit", db))
-        current_count = db.query(models.QueueRegistration).filter(
-            models.QueueRegistration.session_id == queue_data.session_id,
-        ).count()
-        if current_count >= queue_limit:
-            raise HTTPException(status_code=400, detail=f"Đêm diễn đã đủ {queue_limit} lượt đăng ký")
+    check_session_limits(session_exists, queue_data, db)
+    queue_data = assign_preorder_number(queue_data, db)
+    check_song(queue_data, db)
 
-        # 2b. Per-user daily quota (by user_id if provided, else by singer_name+phone)
-        user_quota = int(_get_setting_value("user_quota", db))
-        session_date = session_exists.session_date
-        user_reg_query = db.query(models.QueueRegistration).join(
-            models.LiveSession,
-            models.QueueRegistration.session_id == models.LiveSession.id,
-        ).filter(
-            models.LiveSession.session_date == session_date,
-        )
-        if queue_data.user_id:
-            user_reg_query = user_reg_query.filter(models.QueueRegistration.user_id == queue_data.user_id)
-        elif queue_data.booker_phone:
-            user_reg_query = user_reg_query.filter(models.QueueRegistration.booker_phone == queue_data.booker_phone)
-        else:
-            user_reg_query = user_reg_query.filter(models.QueueRegistration.singer_name == queue_data.singer_name)
-        if user_reg_query.count() >= user_quota:
-            raise HTTPException(status_code=400, detail=f"Mỗi khách chỉ được đăng ký tối đa {user_quota} bài trong ngày")
+    user_id = find_or_create_user(queue_data, db)
+    new_registration = create_registration(queue_data, user_id, db)
 
-    # 3. Validate / auto-assign preorder_number
-    queue_limit_val = int(_get_setting_value("queue_limit", db))
-    # Acquire a per-session advisory lock so concurrent auto-assign requests are serialised
-    session_lock_key = int(UUID(str(queue_data.session_id)).int % (2**63))
-    db.execute(select(func.pg_advisory_xact_lock(session_lock_key)))
-    if queue_data.preorder_number is not None:
-        if not (1 <= queue_data.preorder_number <= queue_limit_val):
-            raise HTTPException(status_code=400, detail=f"Số thứ tự phải từ 1 đến {queue_limit_val}")
-        slot_taken = db.query(models.QueueRegistration).filter(
-            models.QueueRegistration.session_id == queue_data.session_id,
-            models.QueueRegistration.preorder_number == queue_data.preorder_number,
-            models.QueueRegistration.status != "done",
-        ).first()
-        if slot_taken:
-            raise HTTPException(status_code=409, detail=f"Số thứ tự {queue_data.preorder_number} đã được đăng ký")
-    else:
-        # Auto-assign: find first available slot
-        taken = {
-            row.preorder_number
-            for row in db.query(models.QueueRegistration.preorder_number).filter(
-                models.QueueRegistration.session_id == queue_data.session_id,
-                models.QueueRegistration.preorder_number.isnot(None),
-                models.QueueRegistration.status != "done",
-            ).all()
-        }
-        auto_slot = next((n for n in range(1, queue_limit_val + 1) if n not in taken), None)
-        if auto_slot is None:
-            raise HTTPException(status_code=400, detail="Không còn số thứ tự trống")
-        queue_data = queue_data.model_copy(update={"preorder_number": auto_slot})
-
-    # 4. Validate: phải có song_id hoặc free_text_song_name
-    if not queue_data.song_id and not queue_data.free_text_song_name:
-        raise HTTPException(status_code=400, detail="Vui lòng chọn hoặc nhập tên bài hát")
-
-    # 5. Kiểm tra bài hát có trong kho không (chỉ khi có song_id)
-    if queue_data.song_id:
-        song_exists = db.query(models.Song).filter(models.Song.id == queue_data.song_id).first()
-        if not song_exists:
-            raise HTTPException(status_code=404, detail="Không tìm thấy bài hát này")
-
-        # Kiểm tra bài hát đã được đăng ký trong đêm diễn chưa (bỏ qua bài đã hát xong)
-        if not queue_data.allow_duplicate:
-            duplicate = db.query(models.QueueRegistration).filter(
-                models.QueueRegistration.session_id == queue_data.session_id,
-                models.QueueRegistration.song_id == queue_data.song_id,
-                models.QueueRegistration.status != "done",
-            ).first()
-            if duplicate:
-                raise HTTPException(status_code=409, detail="Bài hát này đã được đăng ký trong đêm diễn")
-
-    # 6. Tìm hoặc tạo user
-    user_id = queue_data.user_id
-    if user_id:
-        user = db.query(models.User).filter(models.User.id == user_id).first()
-        if user and queue_data.booker_phone and not user.phone_zalo:
-            user.phone_zalo = queue_data.booker_phone
-            db.flush()
-    else:
-        # Tìm theo tên + phone, hoặc chỉ tên nếu không có phone
-        user = None
-        if queue_data.booker_phone:
-            user = db.query(models.User).filter(
-                models.User.name == queue_data.singer_name,
-                models.User.phone_zalo == queue_data.booker_phone,
-            ).first()
-        if not user:
-            user = db.query(models.User).filter(
-                models.User.name == queue_data.singer_name,
-            ).first()
-        if not user:
-            user = models.User(
-                name=queue_data.singer_name,
-                phone_zalo=queue_data.booker_phone or None,
-                role="customer",
-            )
-            db.add(user)
-            db.flush()
-        user_id = user.id
-
-    # 7. Tạo record
-    new_registration = models.QueueRegistration(
-        session_id=queue_data.session_id,
-        song_id=queue_data.song_id,
-        free_text_song_name=queue_data.free_text_song_name,
-        user_id=user_id,
-        singer_name=queue_data.singer_name,
-        booker_phone=queue_data.booker_phone,
-        table_position=queue_data.table_position,
-        drinks=queue_data.drinks or [],
-        status="waiting",
-        preorder_number=queue_data.preorder_number,
-    )
-
-    db.add(new_registration)
-    db.commit()
-    db.refresh(new_registration)
-
-    # Background: ingest free-text song (create Song → AI lyrics → Slide)
     if queue_data.free_text_song_name and not queue_data.song_id:
         background_tasks.add_task(_ingest_free_text_song, new_registration.id, queue_data.free_text_song_name)
 
     # TODO: trigger Zalo notification
 
-    result = schemas.QueueResponse(
+    return schemas.QueueResponse(
         id=new_registration.id,
         singer_name=new_registration.singer_name,
         status=new_registration.status,
@@ -1139,7 +1025,37 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         order_number=new_registration.preorder_number or 0,
         user_id=user_id,
     )
-    return result
+
+
+# Admin: add a song to the queue, bypassing quota and duplicate checks
+@app.post("/api/admin/queue/register", response_model=schemas.QueueResponse)
+def admin_register_queue(queue_data: schemas.QueueCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    session_exists = db.query(models.LiveSession).filter(models.LiveSession.id == queue_data.session_id).first()
+    if not session_exists:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đêm diễn này")
+    if session_exists.status == "ended":
+        raise HTTPException(status_code=400, detail="Đêm diễn đã kết thúc")
+
+    # quota limits and per-user quota are skipped for admin
+    queue_data = assign_preorder_number(queue_data, db, allow_over_limit=True)
+    # duplicate check is also skipped for admin
+    queue_data = queue_data.model_copy(update={"allow_duplicate": True})
+    check_song(queue_data, db)
+
+    user_id = find_or_create_user(queue_data, db)
+    new_registration = create_registration(queue_data, user_id, db)
+
+    if queue_data.free_text_song_name and not queue_data.song_id:
+        background_tasks.add_task(_ingest_free_text_song, new_registration.id, queue_data.free_text_song_name)
+
+    return schemas.QueueResponse(
+        id=new_registration.id,
+        singer_name=new_registration.singer_name,
+        status=new_registration.status,
+        created_at=new_registration.created_at,
+        order_number=new_registration.preorder_number or 0,
+        user_id=user_id,
+    )
 
 
 # Lấy danh sách bài hát đã đăng ký của một user
@@ -1188,6 +1104,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             video_url=reg.video_url,
             want_facebook_post=reg.want_facebook_post,
             order_number=reg.preorder_number,
+            album_url=reg.session.album_url,
         ))
     return result
 
@@ -1474,37 +1391,8 @@ def get_session_queue(session_id: str, db: Session = Depends(get_db)):
     return result
 
 
+
 # ── Cài đặt venue ────────────────────────────────────────────────────────────
-
-DEFAULT_SETTINGS = {
-    "drinks": '[{"id":"bia_tiger","label":"Bia Tiger"},{"id":"bia_heineken","label":"Bia Heineken"},{"id":"bia_333","label":"Bia 333"},{"id":"ruou_vang_do","label":"Rượu vang đỏ"},{"id":"ruou_vang_trang","label":"Rượu vang trắng"},{"id":"coca_cola","label":"Coca Cola"},{"id":"pepsi","label":"Pepsi"},{"id":"nuoc_suoi","label":"Nước suối"},{"id":"tra_da","label":"Trà đá"},{"id":"nuoc_cam","label":"Nước cam"}]',
-    "queue_limit": "30",
-    "user_quota": "1",
-    "song_font_size": "24",
-    "song_one_page": "true",
-    "copy_fb_template": "🎵 Bài hát: [Bài hát]\n✍️ Tác giả: [Tác giả]\n🎤 Khách hát: [Người hát]",
-    "preorder_list": "[]",
-}
-
-
-def _get_venue_id(db: Session):
-    from sqlalchemy import text
-    venue_id = db.execute(text("SELECT id FROM venues LIMIT 1")).scalar()
-    if not venue_id:
-        raise HTTPException(status_code=400, detail="Không tìm thấy venue")
-    return venue_id
-
-
-def _get_setting_value(key: str, db: Session) -> str:
-    venue_id = _get_venue_id(db)
-    row = db.query(models.VenueSetting).filter(
-        models.VenueSetting.venue_id == venue_id,
-        models.VenueSetting.key == key,
-    ).first()
-    return row.value if row else DEFAULT_SETTINGS.get(key, "")
-
-
-
 
 @app.get("/api/settings", response_model=list[schemas.SettingResponse])
 def get_all_settings(db: Session = Depends(get_db)):
