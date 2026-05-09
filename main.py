@@ -1125,12 +1125,6 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
     db.commit()
     db.refresh(new_registration)
 
-    # Tính order number (vị trí trong hàng đợi của session)
-    order_number = db.query(models.QueueRegistration).filter(
-        models.QueueRegistration.session_id == queue_data.session_id,
-        models.QueueRegistration.created_at <= new_registration.created_at,
-    ).count()
-
     # Background: ingest free-text song (create Song → AI lyrics → Slide)
     if queue_data.free_text_song_name and not queue_data.song_id:
         background_tasks.add_task(_ingest_free_text_song, new_registration.id, queue_data.free_text_song_name)
@@ -1142,7 +1136,7 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
         singer_name=new_registration.singer_name,
         status=new_registration.status,
         created_at=new_registration.created_at,
-        order_number=order_number,
+        order_number=new_registration.preorder_number or 0,
         user_id=user_id,
     )
     return result
@@ -1178,10 +1172,6 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             lyric_id = None
             lyrics_text = None
             all_lyrics = []
-        order_number = db.query(models.QueueRegistration).filter(
-            models.QueueRegistration.session_id == reg.session_id,
-            models.QueueRegistration.created_at <= reg.created_at,
-        ).count()
         result.append(schemas.UserQueueItem(
             registration_id=reg.id,
             song_id=reg.song_id,
@@ -1197,7 +1187,7 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
             drinks=reg.drinks or [],
             video_url=reg.video_url,
             want_facebook_post=reg.want_facebook_post,
-            order_number=order_number,
+            order_number=reg.preorder_number,
         ))
     return result
 
