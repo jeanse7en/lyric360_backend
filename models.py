@@ -76,6 +76,7 @@ class LiveSession(Base):
     video_folder_id = Column(String, nullable=True)
     album_url = Column(String, nullable=True)
     is_private = Column(Boolean, default=False, nullable=False)
+    presenting_lyric_url = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     registrations = relationship("QueueRegistration", back_populates="session", cascade="all, delete-orphan")
@@ -104,6 +105,9 @@ class QueueRegistration(Base):
     status = Column(String, default="waiting")
     actual_start = Column(DateTime(timezone=True))
     actual_end = Column(DateTime(timezone=True))
+    actual_tone = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+    rating = Column(Integer, nullable=True)
     video_url = Column(String)
     want_facebook_post = Column(Boolean, default=False, nullable=False)
     preorder_number = Column(Integer, nullable=True)

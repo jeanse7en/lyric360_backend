@@ -137,11 +137,45 @@ class SessionQueueItem(BaseModel):
     created_at: datetime
     actual_start: Optional[datetime] = None
     actual_end: Optional[datetime] = None
+    actual_tone: Optional[str] = None
+    note: Optional[str] = None
+    rating: Optional[int] = None
     free_text_song_name: Optional[str] = None
     preorder_number: Optional[int] = None
     video_url: Optional[str] = None
     want_facebook_post: bool = False
     songs: Optional[SessionQueueSong] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PresentBody(BaseModel):
+    url: str
+
+
+class QueueNoteUpdate(BaseModel):
+    actual_tone: Optional[str] = None
+    note: Optional[str] = None
+    rating: Optional[int] = None
+
+
+class SongLyricDetail(BaseModel):
+    id: UUID
+    lyrics: str
+    slide_drive_url: Optional[str] = None
+    source_lyric: str = "MANUAL"
+    verified_at: Optional[datetime] = None
+    title: str
+    author: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LiveSessionPresenting(BaseModel):
+    id: UUID
+    presenting_lyric_url: Optional[str] = None
 
     class Config:
         from_attributes = True
