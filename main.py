@@ -1035,6 +1035,10 @@ def admin_register_queue(queue_data: schemas.QueueCreate, background_tasks: Back
 def get_user_queue(user_id: str, db: Session = Depends(get_db)):
     registrations = (
         db.query(models.QueueRegistration)
+        .options(
+            selectinload(models.QueueRegistration.song).selectinload(models.Song.lyrics),
+            selectinload(models.QueueRegistration.session),
+        )
         .filter(models.QueueRegistration.user_id == user_id)
         .order_by(models.QueueRegistration.created_at.desc())
         .limit(50)
