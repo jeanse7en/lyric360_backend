@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, Text, Date, DateTime, ForeignKey, Integer
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -116,3 +116,20 @@ class QueueRegistration(Base):
     session = relationship("LiveSession", back_populates="registrations")
     song = relationship("Song")
     user = relationship("User")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    entity_type = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    entity_id = Column(UUID(as_uuid=True), nullable=False)
+    mac_address = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(Text, nullable=True)
+    before = Column(JSONB, nullable=True)
+    after = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    actor = relationship("User", foreign_keys=[actor_user_id])

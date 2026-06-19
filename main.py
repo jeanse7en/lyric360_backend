@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import sessions, songs, queue, users, settings
+from routers import sessions, songs, queue, users, settings, audit
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
 
@@ -22,6 +22,7 @@ app.include_router(songs.router)
 app.include_router(queue.router)
 app.include_router(users.router)
 app.include_router(settings.router)
+app.include_router(audit.router)
 
 
 @app.get("/")

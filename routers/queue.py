@@ -3,7 +3,7 @@ import traceback
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, selectinload
 
 import models
@@ -17,8 +17,17 @@ from utils.queue_service import (
     create_registration,
     find_or_create_user,
 )
+from utils.audit import log_audit
+from utils.network import client_ip, client_mac, client_user_agent
 
 router = APIRouter(tags=["queue"])
+
+
+def _reg_song_name(reg: models.QueueRegistration, db: Session) -> str | None:
+    if reg.song_id:
+        song = db.query(models.Song).filter(models.Song.id == reg.song_id).first()
+        return song.title if song else None
+    return reg.free_text_song_name
 
 
 def _ingest_free_text_song(registration_id: UUID, title: str):
@@ -70,7 +79,7 @@ def _ingest_free_text_song(registration_id: UUID, title: str):
 
 
 @router.post("/api/queue/register", response_model=schemas.QueueResponse)
-def register_queue(queue_data: schemas.QueueCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def register_queue(request: Request, queue_data: schemas.QueueCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     session_exists = db.query(models.LiveSession).filter(models.LiveSession.id == queue_data.session_id).first()
     if not session_exists:
         raise HTTPException(status_code=404, detail="Không tìm thấy đêm diễn này")
@@ -83,6 +92,21 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
 
     user_id = find_or_create_user(queue_data, db)
     new_registration = create_registration(queue_data, user_id, db)
+
+    song_name = _reg_song_name(new_registration, db)
+    log_audit(
+        db,
+        entity_type="registration",
+        action="create",
+        entity_id=new_registration.id,
+        before=None,
+        after={"song_name": song_name, "singer_name": new_registration.singer_name},
+        actor_user_id=user_id,
+        mac_address=client_mac(request),
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
+    db.commit()
 
     if queue_data.free_text_song_name and not queue_data.song_id:
         background_tasks.add_task(_ingest_free_text_song, new_registration.id, queue_data.free_text_song_name)
@@ -100,7 +124,7 @@ def register_queue(queue_data: schemas.QueueCreate, background_tasks: Background
 
 
 @router.post("/api/admin/queue/register", response_model=schemas.QueueResponse)
-def admin_register_queue(queue_data: schemas.QueueCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def admin_register_queue(request: Request, queue_data: schemas.QueueCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     session_exists = db.query(models.LiveSession).filter(models.LiveSession.id == queue_data.session_id).first()
     if not session_exists:
         raise HTTPException(status_code=404, detail="Không tìm thấy đêm diễn này")
@@ -113,6 +137,21 @@ def admin_register_queue(queue_data: schemas.QueueCreate, background_tasks: Back
 
     user_id = find_or_create_user(queue_data, db)
     new_registration = create_registration(queue_data, user_id, db)
+
+    song_name = _reg_song_name(new_registration, db)
+    log_audit(
+        db,
+        entity_type="registration",
+        action="create_by_admin",
+        entity_id=new_registration.id,
+        before=None,
+        after={"song_name": song_name, "singer_name": new_registration.singer_name},
+        actor_user_id=user_id,
+        mac_address=client_mac(request),
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
+    db.commit()
 
     if queue_data.free_text_song_name and not queue_data.song_id:
         background_tasks.add_task(_ingest_free_text_song, new_registration.id, queue_data.free_text_song_name)
@@ -181,12 +220,14 @@ def get_user_queue(user_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/api/queue/registrations/{reg_id}")
-def update_queue_registration(reg_id: str, update: schemas.QueueUpdate, db: Session = Depends(get_db)):
+def update_queue_registration(request: Request, reg_id: str, update: schemas.QueueUpdate, db: Session = Depends(get_db)):
     reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == reg_id).first()
     if not reg:
         raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
     if reg.status == "done":
         raise HTTPException(status_code=400, detail="Không thể sửa bài đã hát xong")
+
+    before_snapshot = {"song_name": _reg_song_name(reg, db), "singer_name": reg.singer_name}
 
     if update.session_id and str(update.session_id) != str(reg.session_id):
         session = db.query(models.LiveSession).filter(models.LiveSession.id == update.session_id).first()
@@ -235,6 +276,19 @@ def update_queue_registration(reg_id: str, update: schemas.QueueUpdate, db: Sess
             if conflict:
                 raise HTTPException(status_code=409, detail=f"Số thứ tự {update.preorder_number} đã được đăng ký")
         reg.preorder_number = update.preorder_number
+
+    after_snapshot = {"song_name": _reg_song_name(reg, db), "singer_name": reg.singer_name}
+    log_audit(
+        db,
+        entity_type="registration",
+        action="update",
+        entity_id=reg.id,
+        before=before_snapshot,
+        after=after_snapshot,
+        mac_address=client_mac(request),
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
 
     db.commit()
     return {"ok": True}
@@ -287,11 +341,25 @@ def request_facebook_post(reg_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/api/queue/registrations/{reg_id}", status_code=204)
-def delete_queue_registration(reg_id: str, db: Session = Depends(get_db)):
+def delete_queue_registration(request: Request, reg_id: str, db: Session = Depends(get_db)):
     reg = db.query(models.QueueRegistration).filter(models.QueueRegistration.id == reg_id).first()
     if not reg:
         raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
     if reg.status == "done":
         raise HTTPException(status_code=400, detail="Không thể xoá bài đã hát xong")
+
+    before_snapshot = {"song_name": _reg_song_name(reg, db), "singer_name": reg.singer_name}
+    reg_id_uuid = reg.id
     db.delete(reg)
+    log_audit(
+        db,
+        entity_type="registration",
+        action="delete",
+        entity_id=reg_id_uuid,
+        before=before_snapshot,
+        after=None,
+        mac_address=client_mac(request),
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
     db.commit()

@@ -374,3 +374,23 @@ class SettingResponse(BaseModel):
 
 class SettingUpdate(BaseModel):
     value: str
+
+
+# ── Audit logs ───────────────────────────────────────────────────────────────
+
+class AuditLogResponse(BaseModel):
+    id: UUID
+    entity_type: str
+    action: str
+    actor_user_id: Optional[UUID] = None
+    entity_id: UUID
+    mac_address: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    actor_name: Optional[str] = None
+    before: Optional[dict] = None
+    after: Optional[dict] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
